@@ -81,9 +81,12 @@ export function computePlayerScore(player: Player, _sport?: Sport): number {
 
 // ─── Team GSPR Calculation ────────────────────────────────────────────────────
 
+// NBA is offense-only — no dedicated defense slots.
+// All 100% of positional weight goes to offense + depth so GSPR
+// reflects actual player quality instead of being capped at ~65%.
 const SPORT_WEIGHTS = {
-  offense: 0.55,
-  defense: 0.35,
+  offense: 0.90,
+  defense: 0.00,
   depth: 0.10,
 };
 
@@ -367,9 +370,9 @@ export function computeTeamGSPR(
   const w = SPORT_WEIGHTS;
   const raw = (
     offenseScore * w.offense +
-    defenseScore * w.defense +
+    defenseScore * w.defense +   // always 0 for NBA (defense: 0.00), kept for formula clarity
     depthScore * w.depth +
-    totalBonus * 0.12
+    totalBonus * 0.15             // 0.12 → 0.15: bonuses matter more now that defense dead-weight is gone
   );
 
   // Scale to 0–1000
@@ -383,7 +386,6 @@ export function computeTeamGSPR(
 
   const breakdownParts: string[] = [
     `📊 Offense: ${Math.round(offenseScore)}/100`,
-    `🛡️ Defense: ${Math.round(defenseScore)}/100`,
     `📋 Depth: ${Math.round(depthScore)}/100`,
     ...duoRival.labels,
     ...eraChem.labels,
