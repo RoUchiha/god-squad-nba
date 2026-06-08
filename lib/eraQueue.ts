@@ -10,7 +10,7 @@
 
 import type { Era, HistoricalTeam } from './types';
 import { generateTeamEras } from './constants';
-import { NBA_TEAMS } from './sports/nba';
+import { NBA_TEAMS, NBA_CURATED_ERA_KEYS } from './sports/nba';
 
 export type EraQueueItem = { team: HistoricalTeam; era: Era };
 
@@ -24,10 +24,12 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-/** Returns a shuffled array of ALL team+era combos (~330 entries). */
+/** Returns a shuffled array of only curated team+era combos (real player names guaranteed). */
 export function buildEraQueue(): EraQueueItem[] {
   const combos: EraQueueItem[] = NBA_TEAMS.flatMap(team =>
-    generateTeamEras(team).map(era => ({ team, era }))
+    generateTeamEras(team)
+      .filter(era => NBA_CURATED_ERA_KEYS.includes(`${team.id}-${era.id}`))
+      .map(era => ({ team, era }))
   );
   return shuffle(combos);
 }
