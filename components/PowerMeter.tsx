@@ -3,8 +3,9 @@
 import { useMemo } from 'react';
 import type { FilledRosterSlot, Sport, DraftMode } from '@/lib/types';
 import { computeTeamGSPR } from '@/lib/algorithms/powerRating';
-import { getGsprTier, GSPR_TIERS } from '@/lib/constants';
+import { getGsprTier } from '@/lib/constants';
 import { estimateUndefeatedChance } from '@/lib/algorithms/simulator';
+import { analyzeTeamComposition } from '@/lib/teamComposition';
 
 interface Props {
   gspr: number;
@@ -18,6 +19,7 @@ export default function PowerMeter({ gspr, slots, sport, mode }: Props) {
     if (slots.length === 0) return null;
     return computeTeamGSPR(slots, sport, mode);
   }, [slots, sport, mode]);
+  const composition = useMemo(() => analyzeTeamComposition(slots), [slots]);
 
   const tier = getGsprTier(gspr);
   const fillPct = (gspr / 1000) * 100;
@@ -57,10 +59,9 @@ export default function PowerMeter({ gspr, slots, sport, mode }: Props) {
           {teamPower.defenseScore > 0 && (
             <SubBar label="Defense" value={teamPower.defenseScore} color="#3b82f6" />
           )}
-          <SubBar label="Depth" value={teamPower.depthScore} color="#6b7280" />
-          {teamPower.breakdown.length > 3 && (
+          {teamPower.breakdown.length > 1 && (
             <div className="mt-2 space-y-0.5">
-              {teamPower.breakdown.slice(3).map((label, i) => (
+              {teamPower.breakdown.slice(1).map((label, i) => (
                 <div key={i} className="text-[11px] text-yellow-400 font-medium leading-snug">
                   {label}
                 </div>
@@ -81,6 +82,12 @@ export default function PowerMeter({ gspr, slots, sport, mode }: Props) {
           </span>
         </div>
       </div>
+
+      {/* Composition read */}
+      <div className="border-t border-white/5 pt-3 mt-3 space-y-3">
+        <CompositionList title="Pros" items={composition.pros} color="text-green-300" marker="+" />
+        <CompositionList title="Cons" items={composition.cons} color="text-red-300" marker="-" />
+      </div>
     </div>
   );
 }
@@ -96,6 +103,32 @@ function SubBar({ label, value, color }: { label: string; value: number; color: 
         />
       </div>
       <span className="text-[10px] font-mono text-gray-500 w-6 text-right">{Math.round(value)}</span>
+    </div>
+  );
+}
+
+function CompositionList({
+  title,
+  items,
+  color,
+  marker,
+}: {
+  title: string;
+  items: string[];
+  color: string;
+  marker: string;
+}) {
+  return (
+    <div>
+      <div className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${color}`}>{title}</div>
+      <div className="space-y-1">
+        {items.map((item, index) => (
+          <div key={`${title}-${index}`} className="flex gap-2 text-[11px] leading-snug text-gray-400">
+            <span className={`font-bold ${color}`}>{marker}</span>
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

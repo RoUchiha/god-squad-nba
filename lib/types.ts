@@ -20,6 +20,7 @@ export interface HistoricalTeam {
   sport: Sport;
   primaryColor: string;
   secondaryColor: string;
+  logoUrl?: string;
 }
 
 export type Position = 'PG' | 'SG' | 'SF' | 'PF' | 'C';
@@ -76,11 +77,78 @@ export interface TeamPower {
   breakdown: string[];
 }
 
+export interface TeamCompositionAnalysis {
+  pros: string[];
+  cons: string[];
+}
+
 export interface GameResult {
   gameNumber: number;
   win: boolean;
   scoreDiff: number;
   opponentTier: string;
+  opponentTeamId: string;
+  opponentName: string;
+  opponentAbbreviation: string;
+  opponentGspr: number;
+  isHome: boolean;
+  teamScore: number;
+  opponentScore: number;
+}
+
+export interface NBATeamStrength {
+  teamId: string;
+  name: string;
+  city: string;
+  abbreviation: string;
+  conference: 'East' | 'West';
+  division: string;
+  gspr: number;
+  offenseScore: number;
+  defenseScore: number;
+  compositionAnalysis: TeamCompositionAnalysis;
+  rosterNames: string[];
+  startingLineup: string[];
+  baselineWins: number;
+  baselineLosses: number;
+  pointsPerGame: number;
+  opponentPointsPerGame: number;
+  source: '2024-25-baseline' | 'hardcoded-fallback';
+  snapshotDate: string;
+}
+
+export interface LeagueStanding {
+  rank: number;
+  conferenceRank: number;
+  teamId: string;
+  name: string;
+  city: string;
+  abbreviation: string;
+  conference: 'East' | 'West';
+  wins: number;
+  losses: number;
+  gspr: number;
+  powerScore: number;
+  isCustomTeam?: boolean;
+  playoffStatus?: 'playoffs' | 'play-in' | 'lottery';
+}
+
+export interface PlayerSeasonStatLine {
+  playerId: string;
+  name: string;
+  position: Position;
+  slotLabel: string;
+  playerScore: number;
+  gamesPlayed: number;
+  minutes: number;
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
+  fieldGoalPct: number;
+  threePointPct: number;
+  freeThrowPct: number;
 }
 
 export interface SeasonResults {
@@ -90,11 +158,18 @@ export interface SeasonResults {
   totalGames: number;
   games: GameResult[];
   teamPower: TeamPower;
+  compositionAnalysis: TeamCompositionAnalysis;
   isUndefeated: boolean;
   longestWinStreak: number;
+  leagueStandings: LeagueStanding[];
+  rosterStats: PlayerSeasonStatLine[];
+  teamStrengthSnapshotDate: string;
   achievement: string;
   achievementSubtext: string;
   recordLabel: string;
+  recordJustification?: string;
+  recordFactors?: string[];
+  explanationSource?: 'llm' | 'local';
 }
 
 export interface RerollState {

@@ -3,86 +3,68 @@ import { z } from 'zod';
 import type { FilledRosterSlot, Sport, DraftMode } from '@/lib/types';
 import { computeTeamGSPR } from '@/lib/algorithms/powerRating';
 import { simulateSeason } from '@/lib/algorithms/simulator';
+import { analyzeTeamComposition } from '@/lib/teamComposition';
+import { explainSeasonRecord } from '@/lib/recordJustification';
+import { getServerEnv } from '@/lib/serverEnv';
+import { checkDailyQuota, checkRateLimit, getClientIp } from '@/lib/security';
+import { getDailyNbaTeamStrengths } from '@/lib/nbaLeague';
+
+const RateStat = z.number().finite().min(0).max(1);
+const BoxScoreStat = z.number().finite().min(0).max(60);
 
 const PlayerStatsSchema = z.object({
-  points: z.number().optional(),
-  rebounds: z.number().optional(),
-  assists: z.number().optional(),
-  steals: z.number().optional(),
-  blocks: z.number().optional(),
-  fieldGoalPct: z.number().optional(),
-  threePointPct: z.number().optional(),
-  freeThrowPct: z.number().optional(),
-  passingYards: z.number().optional(),
-  passingTDs: z.number().optional(),
-  passerRating: z.number().optional(),
-  rushingYards: z.number().optional(),
-  rushingTDs: z.number().optional(),
-  receivingYards: z.number().optional(),
-  receivingTDs: z.number().optional(),
-  receptions: z.number().optional(),
-  sacks: z.number().optional(),
-  interceptions: z.number().optional(),
-  tackles: z.number().optional(),
-  forcedFumbles: z.number().optional(),
-  battingAvg: z.number().optional(),
-  homeRuns: z.number().optional(),
-  rbi: z.number().optional(),
-  onBasePct: z.number().optional(),
-  sluggingPct: z.number().optional(),
-  ops: z.number().optional(),
-  stolenBases: z.number().optional(),
-  era: z.number().optional(),
-  whip: z.number().optional(),
-  strikeoutsPerNine: z.number().optional(),
-  wins: z.number().optional(),
-  saves: z.number().optional(),
-  inningsPitched: z.number().optional(),
-  goals: z.number().optional(),
-  nhlAssists: z.number().optional(),
-  nhlPoints: z.number().optional(),
-  plusMinus: z.number().optional(),
-  savePct: z.number().optional(),
-  goalsAgainstAvg: z.number().optional(),
-  penaltyMinutes: z.number().optional(),
-  powerPlayGoals: z.number().optional(),
-  soccerGoals: z.number().optional(),
-  soccerAssists: z.number().optional(),
-  soccerApps: z.number().optional(),
-  cleanSheets: z.number().optional(),
-  savePctSoc: z.number().optional(),
-  keyPasses: z.number().optional(),
-  tacklesPG: z.number().optional(),
+  points: BoxScoreStat.optional(),
+  rebounds: BoxScoreStat.optional(),
+  assists: BoxScoreStat.optional(),
+  steals: BoxScoreStat.optional(),
+  blocks: BoxScoreStat.optional(),
+  fieldGoalPct: RateStat.optional(),
+  threePointPct: RateStat.optional(),
+  freeThrowPct: RateStat.optional(),
+  turnovers: BoxScoreStat.optional(),
 }).strict();
 
 const PlayerSchema = z.object({
-  id: z.string().max(60),
-  name: z.string().max(80),
-  position: z.string().max(10),
-  positionGroup: z.enum(['offense', 'defense', 'pitching', 'goalie']).or(z.string()),
+  id: z.string().min(1).max(80).regex(/^[a-zA-Z0-9._-]+$/),
+  name: z.string().min(1).max(80),
+  position: z.enum(['PG', 'SG', 'SF', 'PF', 'C']),
+  positionGroup: z.literal('offense'),
+  eraId: z.string().max(50).regex(/^[a-zA-Z0-9-]+$/).optional(),
+  teamId: z.string().max(20).regex(/^[a-zA-Z0-9]+$/).optional(),
+  bestSeasonYear: z.number().int().min(1946).max(2100).optional(),
   yearsWithTeam: z.string().max(20),
   stats: PlayerStatsSchema,
   playerScore: z.number().min(0).max(100),
   isLegend: z.boolean().optional(),
   isAllStar: z.boolean().optional(),
-});
+  imageUrl: z.string().url().optional(),
+}).strict();
 
 const RosterSlotSchema = z.object({
-  id: z.string(),
-  position: z.union([z.string(), z.array(z.string())]),
-  label: z.string(),
-  group: z.enum(['offense', 'defense', 'pitching', 'goalie']).or(z.string()),
+  id: z.string().min(1).max(30).regex(/^[a-zA-Z0-9_-]+$/),
+  position: z.union([z.enum(['PG', 'SG', 'SF', 'PF', 'C']), z.array(z.enum(['PG', 'SG', 'SF', 'PF', 'C'])).max(5)]),
+  label: z.string().min(1).max(40),
+  group: z.literal('offense'),
   required: z.boolean(),
   player: PlayerSchema.nullable(),
-});
+}).strict();
 
 const SimulateBodySchema = z.object({
-  sport: z.enum(['nba', 'nfl', 'mlb', 'nhl', 'epl', 'wcup']),
-  mode: z.enum(['offense', 'defense', 'combined']),
+  sport: z.literal('nba'),
+  mode: z.literal('combined'),
   slots: z.array(RosterSlotSchema).max(30),
-});
+}).strict();
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req);
+  const requestLimit = checkRateLimit(`simulate:${ip}`, { limit: 20, windowMs: 60_000 });
+  if (!requestLimit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many simulation requests' },
+      { status: 429, headers: { 'Retry-After': String(requestLimit.retryAfter) } }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -104,9 +86,16 @@ export async function POST(req: NextRequest) {
   const typedSlots = slots as unknown as FilledRosterSlot[];
 
   const teamPower = computeTeamGSPR(typedSlots, sport as Sport, mode as DraftMode);
-  const results = simulateSeason(teamPower, sport as Sport);
+  const compositionAnalysis = analyzeTeamComposition(typedSlots);
+  const teamStrengths = await getDailyNbaTeamStrengths();
+  const results = simulateSeason(teamPower, sport as Sport, compositionAnalysis, teamStrengths, typedSlots);
+  const env = getServerEnv();
+  const quota = env.OPENAI_API_KEY
+    ? checkDailyQuota(`openai:${ip}`, env.OPENAI_DAILY_REQUEST_LIMIT)
+    : { allowed: true as const };
+  const explanation = await explainSeasonRecord(results, typedSlots, quota.allowed);
 
-  return NextResponse.json(results, {
+  return NextResponse.json({ ...results, ...explanation }, {
     headers: {
       'Cache-Control': 'no-store', // Each simulation is unique
     },

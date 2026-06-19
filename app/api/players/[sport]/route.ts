@@ -3,6 +3,8 @@ import { z } from 'zod';
 import type { PlayersResponse } from '@/lib/types';
 import { generateTeamEras } from '@/lib/constants';
 import { NBA_TEAMS, fetchNBAPlayers } from '@/lib/sports/nba';
+import { getServerEnv } from '@/lib/serverEnv';
+import { checkRateLimit, getClientIp } from '@/lib/security';
 
 const QuerySchema = z.object({
   teamId: z.string().min(1).max(20).regex(/^[a-zA-Z0-9]+$/),
@@ -10,6 +12,15 @@ const QuerySchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
+  const ip = getClientIp(req);
+  const limit = checkRateLimit(`players:${ip}`, { limit: 120, windowMs: 60_000 });
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfter) } }
+    );
+  }
+
   const { searchParams } = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     teamId: searchParams.get('teamId') ?? '',
@@ -33,7 +44,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const players = await fetchNBAPlayers(team, era, process.env.BALLDONTLIE_API_KEY);
+    const players = await fetchNBAPlayers(team, era, getServerEnv().BALLDONTLIE_API_KEY);
     const response: PlayersResponse = { players, era, team };
     return NextResponse.json(response, {
       headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },

@@ -2,26 +2,20 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'God Squad — Build the Greatest Team in Sports History',
-  description: 'Draft players from historic eras and simulate a perfect season. Can your God Squad go undefeated?',
-  keywords: ['sports', 'fantasy', 'NBA', 'NFL', 'MLB', 'NHL', 'team builder', 'simulation'],
+  title: 'NBA God Squad | Draft the Perfect Team',
+  description: 'Draft players from historic NBA eras and simulate a perfect season.',
+  keywords: ['NBA', 'basketball', 'fantasy', 'team builder', 'season simulation'],
   openGraph: {
-    title: 'God Squad',
-    description: 'Build your perfect historical sports team and go undefeated.',
+    title: 'NBA God Squad',
+    description: 'Build the ultimate historical NBA roster and chase 82-0.',
     type: 'website',
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-[#0a0a0a] text-gray-100 antialiased min-h-screen">
-        {children}
-      </body>
+      <body className="min-h-screen text-gray-100 antialiased">{children}</body>
     </html>
   );
 }
