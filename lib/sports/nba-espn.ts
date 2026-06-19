@@ -11,6 +11,8 @@
 
 import type { Player, HistoricalTeam, Era } from '../types';
 import { computePlayerScore } from '../algorithms/powerRating';
+import { fetchWithTimeout } from '../security';
+import { clamp } from '../utils';
 
 /** Internal team id → ESPN team id */
 export const ESPN_TEAM_ID: Record<string, number> = {
@@ -53,7 +55,7 @@ type ESPNAthlete = {
   id: string;
   fullName: string;
   position?: { abbreviation: string };
-  statistics?: { splits?: { categories?: Array<{ labels: string[]; stats: number[] }> } };
+  contracts?: Array<{ salary?: number; season?: { year?: number } }>;
 };
 
 type ESPNRosterResponse = {
@@ -76,9 +78,20 @@ function normalizePosition(espnPos: string): Player['position'] {
  * Stats are seeded by player ID so they're stable across renders.
  * These are used when we have real names but no live stat feed.
  */
-function generateCurrentStats(playerId: string, position: Player['position'], rank: number): Player['stats'] {
+function currentSalary(athlete: ESPNAthlete): number {
+  return Math.max(0, ...(athlete.contracts ?? []).map(contract => contract.salary ?? 0));
+}
+
+function generateCurrentStats(
+  playerId: string,
+  position: Player['position'],
+  rank: number,
+  salary: number
+): Player['stats'] {
   const seed = playerId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const tier = rank < 3 ? 1.0 : rank < 7 ? 0.75 : 0.5; // stars get better stats
+  const salaryTier = clamp(Math.log10(Math.max(1, salary)) / 8, 0.45, 1);
+  const roleTier = rank < 2 ? 1.08 : rank < 5 ? 0.92 : rank < 9 ? 0.7 : 0.5;
+  const tier = roleTier * 0.72 + salaryTier * 0.28;
 
   const base = {
     PG: { pts: 18, reb: 4,  ast: 7,  stl: 1.3, blk: 0.3, fg: 0.455, tp: 0.368, ft: 0.830 },
@@ -116,15 +129,15 @@ export async function fetchESPNCurrentRoster(
 
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${espnId}/roster`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       next: { revalidate: 21600 }, // Next.js ISR — revalidate every 6 hours
       headers: { 'User-Agent': 'GodSquadGame/1.0' },
-    });
+    }, 5000);
 
     if (!res.ok) return null;
 
     const data: ESPNRosterResponse = await res.json();
-    const athletes = data.athletes ?? [];
+    const athletes = [...(data.athletes ?? [])].sort((a, b) => currentSalary(b) - currentSalary(a));
 
     if (athletes.length === 0) return null;
 
@@ -138,7 +151,7 @@ export async function fetchESPNCurrentRoster(
       seen.add(name);
 
       const pos = normalizePosition(athlete.position?.abbreviation ?? 'F');
-      const stats = generateCurrentStats(athlete.id, pos, rank);
+      const stats = generateCurrentStats(athlete.id, pos, rank, currentSalary(athlete));
 
       const p: Player = {
         id: `nba-espn-${team.id}-${athlete.id}`,
@@ -150,6 +163,7 @@ export async function fetchESPNCurrentRoster(
         yearsWithTeam: `${era.startYear}–${era.endYear}`,
         stats,
         playerScore: 0,
+        isAllStar: rank < 2,
       };
       p.playerScore = computePlayerScore(p, 'nba');
       players.push(p);

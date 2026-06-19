@@ -1,6 +1,7 @@
 'use client';
 
 import type { Player, FilledRosterSlot } from '@/lib/types';
+import { playerRoleLabel, playerEligiblePositions } from '@/lib/playerRoles';
 
 interface Props {
   player: Player;
@@ -16,14 +17,15 @@ function scoreColor(score: number): string {
   return '#6b7280';
 }
 
-function positionMatches(slotPos: Player['position'] | Player['position'][], playerPos: Player['position']): boolean {
-  if (Array.isArray(slotPos)) return slotPos.includes(playerPos);
-  return slotPos === playerPos;
+function positionMatches(slotPos: Player['position'] | Player['position'][], player: Player): boolean {
+  const eligible = playerEligiblePositions(player);
+  if (Array.isArray(slotPos)) return slotPos.some(position => eligible.includes(position));
+  return eligible.includes(slotPos);
 }
 
 export default function PlayerPlacementPicker({ player, slots, onPlace, onCancel }: Props) {
-  const compatible = slots.filter(s => !s.player && positionMatches(s.position, player.position));
-  const posLabel = player.position.replace('_MLB', '').replace('_NHL', '');
+  const compatible = slots.filter(s => !s.player && positionMatches(s.position, player));
+  const posLabel = playerRoleLabel(player);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
@@ -60,7 +62,7 @@ export default function PlayerPlacementPicker({ player, slots, onPlace, onCancel
           {compatible.length === 0 ? (
             <div className="text-sm text-gray-600 text-center py-4">
               All {posLabel} slots are filled.<br />
-              Remove a player first.
+              Pick a player for an open slot.
             </div>
           ) : (
             <div className="space-y-2">

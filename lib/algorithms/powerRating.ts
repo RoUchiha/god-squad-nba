@@ -66,14 +66,30 @@ function calibrate(raw: number, avgRaw: number, goatRaw: number): number {
 export function computePlayerScore(player: Player, _sport?: Sport): number {
   let base = calibrate(scoreNBAPlayer(player), 59, 145);
 
+  const s = player.stats;
+  const points = s.points ?? 0;
+  const assists = s.assists ?? 0;
+  const rebounds = s.rebounds ?? 0;
+  const stocks = (s.steals ?? 0) + (s.blocks ?? 0);
+  const eliteProduction =
+    points >= 27 ||
+    (points >= 22 && assists >= 7) ||
+    (points >= 20 && rebounds >= 10) ||
+    (points >= 18 && stocks >= 3.2);
+  const starProduction =
+    points >= 20 || assists >= 7.5 || rebounds >= 11 ||
+    (points >= 15 && stocks >= 2.5);
+
   if (player.isLegend) {
-    base = Math.max(base, 88);
-    base = Math.min(99, base * 1.06);
+    base = Math.max(base, eliteProduction ? 90 : starProduction ? 84 : 80);
+    base = Math.min(99, base * 1.04);
   } else if (player.isAllStar) {
-    base = Math.max(base, 75);
+    base = Math.max(base, eliteProduction ? 88 : 80);
     base = Math.min(95, base * 1.02);
   } else {
-    base = Math.min(base, 82);
+    if (eliteProduction) base = Math.max(base, 86);
+    else if (starProduction) base = Math.max(base, 79);
+    base = Math.min(base, 86);
   }
 
   return Math.round(base * 10) / 10;
@@ -81,13 +97,10 @@ export function computePlayerScore(player: Player, _sport?: Sport): number {
 
 // ─── Team GSPR Calculation ────────────────────────────────────────────────────
 
-// NBA is offense-only — no dedicated defense slots.
-// All 100% of positional weight goes to offense + depth so GSPR
-// reflects actual player quality instead of being capped at ~65%.
 const SPORT_WEIGHTS = {
-  offense: 0.90,
-  defense: 0.00,
-  depth: 0.10,
+  offense: 0.64,
+  defense: 0.28,
+  depth: 0.00,
 };
 
 function weightedAverage(scores: number[], weights?: number[]): number {
@@ -95,6 +108,71 @@ function weightedAverage(scores: number[], weights?: number[]): number {
   if (!weights) return scores.reduce((a, b) => a + b, 0) / scores.length;
   const totalWeight = weights.reduce((a, b) => a + b, 0);
   return scores.reduce((acc, s, i) => acc + s * (weights[i] ?? 1), 0) / totalWeight;
+}
+
+function stat(player: Player, key: keyof Player['stats']): number {
+  return player.stats[key] ?? 0;
+}
+
+function scoreNBAOffense(players: Player[]): number {
+  if (players.length === 0) return 0;
+
+  const topRotation = [...players]
+    .sort((a, b) => b.playerScore - a.playerScore)
+    .slice(0, 5);
+  const topEndBase = weightedAverage(
+    topRotation.map(p => p.playerScore),
+    topRotation.map((_, i) => Math.max(0.85, 1.45 - i * 0.15))
+  );
+
+  const eliteScorers = players.filter(p => stat(p, 'points') >= 25 || p.playerScore >= 93).length;
+  const eliteCreators = players.filter(p => stat(p, 'assists') >= 6).length;
+  const eliteShooters = players.filter(p => stat(p, 'threePointPct') >= 0.38 && stat(p, 'points') >= 12).length;
+  const topScore = Math.max(...players.map(p => p.playerScore));
+  const weakestScore = Math.min(...players.map(p => p.playerScore));
+
+  const fitBonus = Math.min(
+    5.25,
+    eliteScorers * 1.1 +
+    eliteCreators * 1.0 +
+    eliteShooters * 0.75 +
+    (topScore >= 97 ? 0.9 : 0)
+  );
+  const weakLinkPenalty = players.length >= 6 ? Math.max(0, 82 - weakestScore) * 0.08 : 0;
+
+  return clamp(topEndBase + fitBonus - weakLinkPenalty, 0, 100);
+}
+
+function scoreNBADefender(player: Player): number {
+  const positionAnchor =
+    player.position === 'C' ? 7 :
+    player.position === 'PF' ? 4 :
+    player.position === 'SF' ? 2 :
+    0;
+  const eventValue =
+    stat(player, 'steals') * 9.5 +
+    stat(player, 'blocks') * 8.5 +
+    stat(player, 'rebounds') * 1.15;
+  const profileFloor = player.isLegend ? 4 : player.isAllStar ? 2 : 0;
+
+  return clamp(46 + eventValue + positionAnchor + profileFloor, 25, 100);
+}
+
+function scoreNBADefense(players: Player[]): number {
+  if (players.length === 0) return 0;
+
+  const defenders = [...players]
+    .sort((a, b) => scoreNBADefender(b) - scoreNBADefender(a))
+    .slice(0, 5);
+  const base = weightedAverage(
+    defenders.map(scoreNBADefender),
+    defenders.map((_, i) => Math.max(0.85, 1.35 - i * 0.12))
+  );
+  const rimProtector = players.some(p => (p.position === 'C' || p.position === 'PF') && stat(p, 'blocks') >= 2);
+  const perimeterPressure = players.filter(p => stat(p, 'steals') >= 1.5).length >= 2;
+  const guardHeavyPenalty = players.filter(p => p.position === 'PG' || p.position === 'SG').length >= 4 ? 3 : 0;
+
+  return clamp(base + (rimProtector ? 4 : 0) + (perimeterPressure ? 3 : 0) - guardHeavyPenalty, 0, 100);
 }
 
 // ─── Historic duo bonus ───────────────────────────────────────────────────────
@@ -338,27 +416,10 @@ export function computeTeamGSPR(
     return { gspr: 0, offenseScore: 0, defenseScore: 0, depthScore: 0, chemistryBonus: 0, tier: 'average', breakdown: [] };
   }
 
-  // NBA: all players are offense
-  const offPlayers = players;
-  const defPlayers: Player[] = [];
+  const offenseScore = scoreNBAOffense(players);
+  const defenseScore = scoreNBADefense(players);
 
-  const buildWeights = (arr: Player[]) =>
-    arr.map((_, i) => Math.max(1, 1.5 - i * 0.1));
-
-  const offenseScore = offPlayers.length > 0
-    ? weightedAverage(offPlayers.map(p => p.playerScore), buildWeights(offPlayers))
-    : 0;
-
-  const defenseScore = defPlayers.length > 0
-    ? weightedAverage(defPlayers.map(p => p.playerScore), buildWeights(defPlayers))
-    : 0;
-
-  // Depth: bonus for filling all required slots
-  const required = slots.filter(s => s.required);
-  const filledRequired = required.filter(s => s.player !== null);
-  const depthScore = required.length > 0
-    ? (filledRequired.length / required.length) * 100
-    : 80;
+  const depthScore = 0;
 
   const duoRival   = duoAndRivalBonus(players);
   const eraChem    = eraChemistryBonus(players);
@@ -366,17 +427,24 @@ export function computeTeamGSPR(
   const physical   = physicalBonus(players);
   const statCombo  = statComboBonus(players);
   const totalBonus = duoRival.total + eraChem.total + teamChem.total + physical.total + statCombo.total;
+  const topFive = [...players].sort((a, b) => b.playerScore - a.playerScore).slice(0, 5);
+  const starCore = weightedAverage(topFive.map(player => player.playerScore));
+  const starPower = Math.max(0, starCore - 80) * 0.35;
+  const twoWayBalance = Math.min(offenseScore, defenseScore) >= 90 ? 2.5 : 0;
 
   const w = SPORT_WEIGHTS;
   const raw = (
     offenseScore * w.offense +
-    defenseScore * w.defense +   // always 0 for NBA (defense: 0.00), kept for formula clarity
+    defenseScore * w.defense +
     depthScore * w.depth +
-    totalBonus * 0.15             // 0.12 → 0.15: bonuses matter more now that defense dead-weight is gone
+    totalBonus * 0.32 +
+    starPower +
+    twoWayBalance
   );
 
   // Scale to 0–1000
-  const gspr = Math.round(clamp(raw * 10, 0, 1000));
+  const rosterCompletion = clamp(players.length / 6, 0, 1);
+  const gspr = Math.round(clamp(raw * 10 * rosterCompletion, 0, 1000));
 
   const tier = gspr >= 950 ? 'god'
     : gspr >= 850 ? 'legendary'
@@ -386,7 +454,9 @@ export function computeTeamGSPR(
 
   const breakdownParts: string[] = [
     `📊 Offense: ${Math.round(offenseScore)}/100`,
-    `📋 Depth: ${Math.round(depthScore)}/100`,
+    `Defense: ${Math.round(defenseScore)}/100`,
+    `Star power: ${Math.round(starCore)}/100`,
+    `Roster completion: ${players.length}/6`,
     ...duoRival.labels,
     ...eraChem.labels,
     ...teamChem.labels,

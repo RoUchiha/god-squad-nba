@@ -24,36 +24,49 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-/** Returns a shuffled array of only curated team+era combos (real player names guaranteed). */
-export function buildEraQueue(): EraQueueItem[] {
-  const combos: EraQueueItem[] = NBA_TEAMS.flatMap(team =>
-    generateTeamEras(team)
-      .filter(era => NBA_CURATED_ERA_KEYS.includes(`${team.id}-${era.id}`))
-      .map(era => ({ team, era }))
+function curatedEras(team: HistoricalTeam): Era[] {
+  return generateTeamEras(team).filter(era =>
+    NBA_CURATED_ERA_KEYS.includes(`${team.id}-${era.id}`)
   );
-  return shuffle(combos);
+}
+
+/** One appearance per franchise, with a random curated era for that appearance. */
+export function buildEraQueue(): EraQueueItem[] {
+  return shuffle(NBA_TEAMS).flatMap(team => {
+    const eras = curatedEras(team);
+    if (eras.length === 0) return [];
+    return [{ team, era: eras[Math.floor(Math.random() * eras.length)] }];
+  });
 }
 
 /** Find the next queue item with a different team. Removes it from the queue. */
 export function rerollTeam(
   queue: EraQueueItem[],
   excludeTeamId: string,
+  currentEraStart: number,
 ): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
-  const idx = queue.findIndex(item => item.team.id !== excludeTeamId);
+  const allowedStarts = new Set([currentEraStart - 5, currentEraStart, currentEraStart + 5]);
+  const idx = queue.findIndex(item =>
+    item.team.id !== excludeTeamId && curatedEras(item.team).some(era => allowedStarts.has(era.startYear))
+  );
   if (idx === -1) return null;
   const newQueue = [...queue];
-  const [item] = newQueue.splice(idx, 1);
+  const [queuedItem] = newQueue.splice(idx, 1);
+  const eras = curatedEras(queuedItem.team).filter(era => allowedStarts.has(era.startYear));
+  const item = { team: queuedItem.team, era: eras[Math.floor(Math.random() * eras.length)] };
   return { item, newQueue };
 }
 
 /** Find the next queue item with a different era. Removes it from the queue. */
 export function rerollEra(
   queue: EraQueueItem[],
+  team: HistoricalTeam,
   excludeEraId: string,
 ): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
-  const idx = queue.findIndex(item => item.era.id !== excludeEraId);
-  if (idx === -1) return null;
-  const newQueue = [...queue];
-  const [item] = newQueue.splice(idx, 1);
-  return { item, newQueue };
+  const eras = curatedEras(team).filter(era => era.id !== excludeEraId);
+  if (eras.length === 0) return null;
+  return {
+    item: { team, era: eras[Math.floor(Math.random() * eras.length)] },
+    newQueue: queue,
+  };
 }

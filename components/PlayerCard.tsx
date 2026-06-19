@@ -1,12 +1,14 @@
 'use client';
 
 import type { Player } from '@/lib/types';
+import { playerRoleLabel } from '@/lib/playerRoles';
 
 interface Props {
   player: Player;
   sport: 'nba';
   isSelected: boolean;
   isHighlighted: boolean;
+  isInvalid?: boolean;
   onSelect: (player: Player) => void;
 }
 
@@ -31,8 +33,9 @@ function scoreColor(score: number): string {
   return '#6b7280';
 }
 
-export default function PlayerCard({ player, isSelected, isHighlighted, onSelect }: Props) {
+export default function PlayerCard({ player, isSelected, isHighlighted, isInvalid = false, onSelect }: Props) {
   const s = player.stats;
+  const roleLabel = playerRoleLabel(player);
   const keyStats: [string, number | undefined][] = [
     ['points', s.points], ['rebounds', s.rebounds], ['assists', s.assists],
     ['steals', s.steals], ['blocks', s.blocks], ['fieldGoalPct', s.fieldGoalPct],
@@ -47,7 +50,9 @@ export default function PlayerCard({ player, isSelected, isHighlighted, onSelect
         w-full text-left p-3 rounded-lg border transition-all duration-150
         ${isSelected
           ? 'opacity-30 cursor-not-allowed border-white/5 bg-white/2'
-          : isHighlighted
+          : isInvalid
+            ? 'animate-invalid-shake border-red-500/70 bg-red-950/40 ring-2 ring-red-500/30 cursor-pointer'
+            : isHighlighted
             ? 'border-yellow-500/60 bg-yellow-950/30 hover:bg-yellow-950/50 cursor-pointer'
             : 'glass glass-hover border-white/5 hover:border-white/20 cursor-pointer active:scale-[0.98]'
         }
@@ -58,7 +63,7 @@ export default function PlayerCard({ player, isSelected, isHighlighted, onSelect
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider flex-shrink-0"
               style={{ backgroundColor: 'rgba(255,255,255,0.08)', color: '#9ca3af' }}>
-              {player.position}
+              {roleLabel}
             </span>
             {player.isLegend && <span className="text-[10px] font-bold text-yellow-500">★ HOF</span>}
             {player.isAllStar && !player.isLegend && <span className="text-[10px] font-bold text-blue-400">⭐</span>}

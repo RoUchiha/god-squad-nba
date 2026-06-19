@@ -35,7 +35,42 @@ export const NBA_TEAMS: HistoricalTeam[] = [
   { id: '30', name: 'Wizards', city: 'Washington', abbreviation: 'WAS', sport: 'nba', primaryColor: '#002B5C', secondaryColor: '#E31837' },
 ];
 
-type HistoricalNBAPlayer = { name: string; position: Player['position']; stats: Player['stats']; isLegend?: boolean; isAllStar?: boolean };
+type HistoricalNBAPlayer = {
+  name: string;
+  position: Player['position'];
+  stats: Player['stats'];
+  seasonStats?: Player['stats'][];
+  isLegend?: boolean;
+  isAllStar?: boolean;
+};
+
+const STAT_KEYS: Array<keyof Player['stats']> = [
+  'points',
+  'rebounds',
+  'assists',
+  'steals',
+  'blocks',
+  'turnovers',
+  'fieldGoalPct',
+  'threePointPct',
+  'freeThrowPct',
+];
+
+function bestStatsInEra(player: HistoricalNBAPlayer): Player['stats'] {
+  if (!player.seasonStats || player.seasonStats.length === 0) return player.stats;
+
+  return STAT_KEYS.reduce<Player['stats']>((best, key) => {
+    const values = player.seasonStats
+      ?.map(stats => stats[key])
+      .filter((value): value is number => typeof value === 'number');
+
+    if (values && values.length > 0) {
+      best[key] = key === 'turnovers' ? Math.min(...values) : Math.max(...values);
+    }
+
+    return best;
+  }, { ...player.stats });
+}
 
 const NBA_HISTORICAL_ROSTERS: Record<string, HistoricalNBAPlayer[]> = {
   // Lakers Showtime I 1980-1984
@@ -291,7 +326,18 @@ const NBA_HISTORICAL_ROSTERS: Record<string, HistoricalNBAPlayer[]> = {
   ],
   // Warriors Post-Durant 2020-2024
   '10-nba-10-2020': [
-    { name: 'Stephen Curry',     position: 'PG', isLegend: true,   stats: { points: 32.0, rebounds: 5.5, assists: 5.8, steals: 1.3, blocks: 0.4, fieldGoalPct: 0.476, threePointPct: 0.421, freeThrowPct: 0.916 } },
+    {
+      name: 'Stephen Curry',
+      position: 'PG',
+      isLegend: true,
+      stats: { points: 32.0, rebounds: 5.5, assists: 5.8, steals: 1.3, blocks: 0.4, fieldGoalPct: 0.476, threePointPct: 0.421, freeThrowPct: 0.916 },
+      seasonStats: [
+        { points: 32.0, rebounds: 5.5, assists: 5.8, steals: 1.2, blocks: 0.1, fieldGoalPct: 0.482, threePointPct: 0.421, freeThrowPct: 0.916 },
+        { points: 25.5, rebounds: 5.2, assists: 6.3, steals: 1.3, blocks: 0.4, fieldGoalPct: 0.437, threePointPct: 0.380, freeThrowPct: 0.923 },
+        { points: 29.4, rebounds: 6.1, assists: 6.3, steals: 0.9, blocks: 0.4, fieldGoalPct: 0.493, threePointPct: 0.427, freeThrowPct: 0.915 },
+        { points: 26.4, rebounds: 4.5, assists: 5.1, steals: 0.7, blocks: 0.4, fieldGoalPct: 0.450, threePointPct: 0.408, freeThrowPct: 0.923 },
+      ],
+    },
     { name: 'Klay Thompson',     position: 'SG', isLegend: true,   stats: { points: 18.4, rebounds: 3.7, assists: 2.1, steals: 0.7, blocks: 0.4, fieldGoalPct: 0.446, threePointPct: 0.388, freeThrowPct: 0.844 } },
     { name: 'Draymond Green',    position: 'PF', isLegend: true,   stats: { points: 8.0,  rebounds: 7.2, assists: 7.0, steals: 1.3, blocks: 0.8, fieldGoalPct: 0.455, threePointPct: 0.284, freeThrowPct: 0.625 } },
     { name: 'Andrew Wiggins',    position: 'SF', isAllStar: true,  stats: { points: 17.2, rebounds: 4.5, assists: 2.1, steals: 1.0, blocks: 0.6, fieldGoalPct: 0.479, threePointPct: 0.386, freeThrowPct: 0.706 } },
@@ -318,9 +364,9 @@ const NBA_HISTORICAL_ROSTERS: Record<string, HistoricalNBAPlayer[]> = {
   ],
   // Celtics Big Three 2.0 2005-2009
   '2-nba-2-2005': [
-    { name: 'Paul Pierce',       position: 'SF', isLegend: true,   stats: { points: 19.6, rebounds: 5.7, assists: 4.5, steals: 1.0, blocks: 0.5, fieldGoalPct: 0.461, threePointPct: 0.387, freeThrowPct: 0.828 } },
-    { name: 'Kevin Garnett',     position: 'PF', isLegend: true,   stats: { points: 18.8, rebounds: 9.2, assists: 3.4, steals: 1.3, blocks: 1.4, fieldGoalPct: 0.494, threePointPct: 0.250, freeThrowPct: 0.810 } },
-    { name: 'Ray Allen',         position: 'SG', isLegend: true,   stats: { points: 17.4, rebounds: 3.9, assists: 2.8, steals: 1.1, blocks: 0.2, fieldGoalPct: 0.464, threePointPct: 0.393, freeThrowPct: 0.907 } },
+    { name: 'Paul Pierce',       position: 'SF', isLegend: true,   stats: { points: 26.8, rebounds: 6.7, assists: 5.1, steals: 1.4, blocks: 0.8, fieldGoalPct: 0.472, threePointPct: 0.392, freeThrowPct: 0.843 } },
+    { name: 'Kevin Garnett',     position: 'PF', isLegend: true,   stats: { points: 18.8, rebounds: 9.2, assists: 3.4, steals: 1.4, blocks: 1.4, fieldGoalPct: 0.539, threePointPct: 0.250, freeThrowPct: 0.841 } },
+    { name: 'Ray Allen',         position: 'SG', isLegend: true,   stats: { points: 17.4, rebounds: 3.9, assists: 3.1, steals: 1.1, blocks: 0.2, fieldGoalPct: 0.480, threePointPct: 0.409, freeThrowPct: 0.952 } },
     { name: 'Rajon Rondo',       position: 'PG', isAllStar: true,  stats: { points: 10.6, rebounds: 5.0, assists: 8.7, steals: 2.5, blocks: 0.3, fieldGoalPct: 0.480, threePointPct: 0.258, freeThrowPct: 0.598 } },
     { name: 'Kendrick Perkins',  position: 'C',                    stats: { points: 6.9,  rebounds: 7.6, assists: 1.0, steals: 0.5, blocks: 1.0, fieldGoalPct: 0.514, threePointPct: 0.000, freeThrowPct: 0.553 } },
     { name: 'Glen Davis',        position: 'PF',                   stats: { points: 8.4,  rebounds: 5.1, assists: 0.9, steals: 0.5, blocks: 0.6, fieldGoalPct: 0.487, threePointPct: 0.000, freeThrowPct: 0.688 } },
@@ -613,35 +659,62 @@ function fakeName(seed: number): string {
 
 export const NBA_CURATED_ERA_KEYS = Object.keys(NBA_HISTORICAL_ROSTERS);
 
-export async function fetchNBAPlayers(team: HistoricalTeam, era: Era, _apiKey?: string): Promise<Player[]> {
-  // For current eras (2020+), try ESPN live roster first so trade news is reflected
-  if (era.startYear >= LIVE_ERA_THRESHOLD) {
-    const espnPlayers = await fetchESPNCurrentRoster(team, era);
-    if (espnPlayers && espnPlayers.length >= 5) {
-      return espnPlayers;
-    }
-  }
+const CHAMPIONSHIP_ERAS = new Set([
+  '14-nba-14-1980', '14-nba-14-1985', '14-nba-14-2000', '14-nba-14-2005',
+  '2-nba-2-1980', '2-nba-2-1985', '2-nba-2-2005',
+  '5-nba-5-1990', '5-nba-5-1995',
+  '27-nba-27-2000', '27-nba-27-2005',
+  '16-nba-16-2005', '16-nba-16-2010',
+  '10-nba-10-2015', '10-nba-10-2020',
+  '9-nba-9-1985', '9-nba-9-1990',
+  '23-nba-23-1980', '11-nba-11-1990', '11-nba-11-1995',
+  '6-nba-6-2015', '8-nba-8-2020', '17-nba-17-2020', '28-nba-28-2015',
+]);
 
-  // Check hardcoded historical roster
+function applyChampionshipCoreFloors(key: string, players: Player[]): Player[] {
+  const ranked = [...players].sort((a, b) => b.playerScore - a.playerScore);
+  if (!CHAMPIONSHIP_ERAS.has(key)) return ranked;
+
+  const floors = [92, 88, 84];
+  return ranked
+    .map((player, index) => index < floors.length
+      ? { ...player, playerScore: Math.max(player.playerScore, floors[index]) }
+      : player)
+    .sort((a, b) => b.playerScore - a.playerScore);
+}
+
+export async function fetchNBAPlayers(team: HistoricalTeam, era: Era, _apiKey?: string): Promise<Player[]> {
   const key = `${team.id}-${era.id}`;
+
+  // Curated historical eras must win over live data. Otherwise 2020-2024
+  // historical teams can accidentally show today's ESPN roster.
   if (NBA_HISTORICAL_ROSTERS[key]) {
-    return NBA_HISTORICAL_ROSTERS[key].map((hp, i) => {
+    const players = NBA_HISTORICAL_ROSTERS[key].map((hp, i) => {
       const p: Player = {
-        id: `nba-hist-${team.id}-${i}`,
+        id: `nba-hist-${team.id}-${era.id}-${i}`,
         name: hp.name,
         position: hp.position,
         positionGroup: 'offense',
         eraId: era.id,
         teamId: team.id,
         yearsWithTeam: `${era.startYear}–${era.endYear}`,
-        stats: hp.stats,
+        stats: bestStatsInEra(hp),
         playerScore: 0,
         isLegend: hp.isLegend,
         isAllStar: hp.isAllStar,
       };
       p.playerScore = computePlayerScore(p, 'nba');
       return p;
-    }).sort((a, b) => b.playerScore - a.playerScore);
+    });
+    return applyChampionshipCoreFloors(key, players);
+  }
+
+  // For non-curated current eras, try ESPN live roster so trade news is reflected.
+  if (era.startYear >= LIVE_ERA_THRESHOLD) {
+    const espnPlayers = await fetchESPNCurrentRoster(team, era);
+    if (espnPlayers && espnPlayers.length >= 5) {
+      return espnPlayers;
+    }
   }
 
   // Final fallback: generate plausible-looking players
@@ -664,7 +737,7 @@ function generateFallbackNBAPlayers(team: HistoricalTeam, era: Era): Player[] {
     const basePts = pos === 'PG' ? 22 : pos === 'SG' ? 20 : pos === 'SF' ? 19 : pos === 'PF' ? 17 : 15;
     const pts = basePts + (s % 12);
     const p: Player = {
-      id: `nba-fb-${team.id}-${idx}`,
+      id: `nba-fb-${team.id}-${era.id}-${idx}`,
       name: fakeName(s),
       position: pos,
       positionGroup: 'offense',

@@ -1,6 +1,8 @@
 'use client';
 
+import Image from 'next/image';
 import type { Sport, Era, HistoricalTeam } from '@/lib/types';
+import { nbaTeamLogoUrl } from '@/lib/nbaLastSeason';
 
 interface Props {
   era: Era | null;
@@ -33,16 +35,26 @@ export default function EraCard({ era, team, isLoading, sport }: Props) {
       className="flex-1 glass glass-hover rounded-xl p-4 border-l-4 transition-all"
       style={{ borderLeftColor: team.primaryColor }}
     >
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-4">
+          <Image
+            src={team.logoUrl ?? nbaTeamLogoUrl(team.abbreviation)}
+            alt={`${team.city} ${team.name} logo`}
+            width={56}
+            height={56}
+            unoptimized
+            className="h-14 w-14 flex-shrink-0 object-contain drop-shadow-lg"
+          />
+          <div className="min-w-0">
           <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">
             {era.startYear}–{era.endYear} Era
           </div>
           <div className="text-lg font-bold text-white">
             {team.city} {team.name}
           </div>
-          <div className="text-xs text-gray-400 mt-1 max-w-xs">
+          <div className="text-xs text-gray-400 mt-1 max-w-lg">
             {era.name} · {era.description}
+          </div>
           </div>
         </div>
         <div

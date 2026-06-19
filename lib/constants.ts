@@ -79,7 +79,7 @@ const ERA_DATA: Record<string, { name: string; description: string }> = {
   'nba-16-2010': { name: "LeBron's Decision",description: "The Big Three — LeBron, Wade, and Bosh — win back-to-back championships" },
   // ── Warriors ────────────────────────────────────────────────────────────────
   'nba-10-2015': { name: 'Splash Brothers',  description: "Curry and Thompson light up the league; a 73-win season and three rings in four years" },
-  'nba-10-2020': { name: 'Warriors Reloaded',description: "Steph Curry's unanimous MVP season; Golden State dynasty reloads around its core" },
+  'nba-10-2020': { name: 'Warriors Reloaded',description: "Steph Curry's scoring-title season and the 2022 championship keep Golden State's dynasty alive" },
   // ── Pistons ─────────────────────────────────────────────────────────────────
   'nba-9-1985':  { name: 'Bad Boys Rising',  description: "Isiah Thomas and the Bad Boys begin their bruising run toward a championship" },
   'nba-9-1990':  { name: 'Back-to-Back',     description: "Detroit's Bad Boys repeat as champions; the most physically dominant team of the era" },
