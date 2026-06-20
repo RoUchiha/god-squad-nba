@@ -53,12 +53,12 @@ god-squad/
     └── sports/
         ├── mlb.ts           MLB Stats API (free, no key)
         ├── nhl.ts           NHL API (free, no key)
-        ├── nba.ts           BallDontLie API (free tier, needs BALLDONTLIE_API_KEY)
+        ├── nba.ts           Validated curated rosters; ESPN current-roster fallback
         └── nfl.ts           ESPN unofficial API (no key)
 ```
 
 ## Key Architecture Decisions
-- **All API keys are server-side only** — stored in `.env.local`, used in `app/api/` routes
+- **All secrets are server-side only** — stored in `.env.local` or Vercel environment variables
 - **Input validation**: every API route validates params with Zod before any external call
 - **Fallback data**: if external sports APIs fail, each `lib/sports/*.ts` generates plausible placeholder data so the game always works
 - **No auth/database** — the game is stateless; no user accounts needed
@@ -94,7 +94,7 @@ NHL: base=0.600, range=0.382  → max 0.982
 |-------|-----|------|-------|
 | MLB | statsapi.mlb.com/api/v1 | None | Official, historical back to 1876 |
 | NHL | api-web.nhle.com/v1 | None | Official |
-| NBA | api.balldontlie.io/v1 | Free API key | `BALLDONTLIE_API_KEY` env var |
+| NBA | Curated data + ESPN current rosters | None | Validated historical rosters are bundled server-side |
 | NFL | site.api.espn.com/... | None | Unofficial ESPN API |
 
 ## Eras Defined (in lib/constants.ts)
@@ -116,9 +116,9 @@ Each game has exactly 3 one-time-use rerolls:
 
 ## Environment Variables
 ```
-BALLDONTLIE_API_KEY=   # Required for NBA live data (free signup)
-RATE_LIMIT_SECRET=     # Optional, for enhanced rate limiting
-NEXT_PUBLIC_APP_URL=   # For CORS in production
+CRON_SECRET=           # Required for the protected refresh route; minimum 32 characters
+OPENAI_API_KEY=        # Optional server-only season explanations
+OPENAI_MODEL=          # Optional; defaults to gpt-4o-mini
 ```
 
 ## Deployment
@@ -130,7 +130,7 @@ Custom domain via Vercel: set DNS CNAME to cname.vercel-dns.com
 - NHL historical stats (pre-2010) may need fallback data
 - No user accounts or leaderboard yet
 - Could add: share results link, leaderboard, more sports (MLS, WNBA)
-- Rate limiting is in-memory (resets on server restart) — use Upstash Redis for production
+- App-level rate limiting is per instance; add a Vercel Firewall rate-limit rule for distributed enforcement
 
 ## Commands
 ```bash

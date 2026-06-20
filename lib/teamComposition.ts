@@ -1,4 +1,5 @@
 import type { FilledRosterSlot, Player, TeamCompositionAnalysis } from './types';
+import { playersWithEffectiveScores } from './effectivePlayerScore';
 import { playerEligiblePositions } from './playerRoles';
 
 interface Read {
@@ -31,7 +32,7 @@ function choose(reads: Read[], count = 3): string[] {
 }
 
 export function analyzeTeamComposition(slots: FilledRosterSlot[]): TeamCompositionAnalysis {
-  const players = slots.flatMap(slot => slot.player ? [slot.player] : []);
+  const players = playersWithEffectiveScores(slots);
   if (players.length === 0) {
     return {
       pros: ['Draft a player to establish the lineup identity.'],

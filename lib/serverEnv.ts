@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 const EnvSchema = z.object({
-  BALLDONTLIE_API_KEY: z.string().trim().min(1).optional(),
   CRON_SECRET: z.string().trim().min(32).optional(),
   OPENAI_API_KEY: z.string().trim().min(1).optional(),
   OPENAI_MODEL: z.string().trim().min(1).default('gpt-4o-mini'),

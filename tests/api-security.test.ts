@@ -16,7 +16,7 @@ describe('API security controls', () => {
 
     const response = await cronGet(request('http://localhost/api/cron/nba-refresh'));
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ error: 'Cron endpoint is not configured' });
 
     if (previousSecret) process.env.CRON_SECRET = previousSecret;
@@ -36,5 +36,40 @@ describe('API security controls', () => {
     }));
 
     expect(response.status).toBe(400);
+  });
+
+  it('rejects cross-site simulation requests', async () => {
+    const response = await simulatePost(request('https://game.example/api/simulate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://attacker.example' },
+      body: '{}',
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it('accepts same-origin requests using the forwarded host authority', async () => {
+    const response = await simulatePost(request('http://localhost/api/simulate', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: 'https://game.example',
+        'x-forwarded-host': 'game.example',
+        'x-forwarded-proto': 'https',
+      },
+      body: '{}',
+    }));
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects oversized simulation bodies before parsing them', async () => {
+    const response = await simulatePost(request('http://localhost/api/simulate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': '70000' },
+      body: '{}',
+    }));
+
+    expect(response.status).toBe(413);
   });
 });

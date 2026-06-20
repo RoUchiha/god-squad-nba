@@ -1,4 +1,5 @@
 import type { FilledRosterSlot, Player, SeasonResults } from './types';
+import { playersWithEffectiveScores } from './effectivePlayerScore';
 import { getServerEnv } from './serverEnv';
 import { fetchWithTimeout } from './security';
 
@@ -24,7 +25,7 @@ const INJURY_PROFILE: Record<string, string> = {
 };
 
 function filledPlayers(slots: FilledRosterSlot[]): Player[] {
-  return slots.flatMap(slot => slot.player ? [slot.player] : []);
+  return playersWithEffectiveScores(slots);
 }
 
 function stat(player: Player, key: keyof Player['stats']): number {

@@ -1,6 +1,10 @@
 import type { Player, HistoricalTeam, Era } from '../types';
+import { generateTeamEras } from '../constants';
 import { computePlayerScore } from '../algorithms/powerRating';
+import { NBA_CURATED_EXPANSION_ROSTERS } from './nba-curated-expansion';
+import { NBA_FRANCHISE_DEPTH_ROSTERS } from './nba-franchise-depth';
 import { fetchESPNCurrentRoster, LIVE_ERA_THRESHOLD } from './nba-espn';
+import { normalizePlayerName } from '../playerIdentity';
 
 export const NBA_TEAMS: HistoricalTeam[] = [
   { id: '1', name: 'Hawks', city: 'Atlanta', abbreviation: 'ATL', sport: 'nba', primaryColor: '#E03A3E', secondaryColor: '#C1D32F' },
@@ -225,6 +229,7 @@ const NBA_HISTORICAL_ROSTERS: Record<string, HistoricalNBAPlayer[]> = {
     { name: 'Charles Barkley',   position: 'PF', isLegend: true,   stats: { points: 21.6, rebounds: 11.7, assists: 4.0, steals: 1.3, blocks: 0.8, fieldGoalPct: 0.514, threePointPct: 0.227, freeThrowPct: 0.741 } },
     { name: 'Sam Cassell',       position: 'PG', isAllStar: true,  stats: { points: 19.3, rebounds: 3.8, assists: 7.2, steals: 1.3, blocks: 0.2, fieldGoalPct: 0.476, threePointPct: 0.331, freeThrowPct: 0.866 } },
     { name: 'Mario Elie',        position: 'SG',                   stats: { points: 11.9, rebounds: 3.0, assists: 3.1, steals: 1.2, blocks: 0.2, fieldGoalPct: 0.479, threePointPct: 0.416, freeThrowPct: 0.830 } },
+    { name: 'Matt Bullard',      position: 'SF',                   stats: { points: 7.3,  rebounds: 3.1, assists: 1.1, steals: 0.4, blocks: 0.3, fieldGoalPct: 0.442, threePointPct: 0.404, freeThrowPct: 0.813 } },
     { name: 'Kevin Willis',      position: 'PF',                   stats: { points: 13.7, rebounds: 9.3, assists: 1.2, steals: 0.7, blocks: 0.8, fieldGoalPct: 0.492, threePointPct: 0.000, freeThrowPct: 0.718 } },
     { name: 'Sedale Threatt',    position: 'PG',                   stats: { points: 7.8,  rebounds: 2.1, assists: 4.3, steals: 1.1, blocks: 0.1, fieldGoalPct: 0.453, threePointPct: 0.313, freeThrowPct: 0.800 } },
     { name: 'Othella Harrington', position: 'C',                   stats: { points: 5.3,  rebounds: 4.8, assists: 0.6, steals: 0.4, blocks: 0.9, fieldGoalPct: 0.517, threePointPct: 0.000, freeThrowPct: 0.601 } },
@@ -648,16 +653,75 @@ const NBA_HISTORICAL_ROSTERS: Record<string, HistoricalNBAPlayer[]> = {
     { name: 'OG Anunoby',        position: 'SF',                   stats: { points: 8.0,  rebounds: 3.4, assists: 0.9, steals: 1.5, blocks: 0.6, fieldGoalPct: 0.478, threePointPct: 0.387, freeThrowPct: 0.721 } },
     { name: 'Delon Wright',      position: 'PG',                   stats: { points: 7.7,  rebounds: 3.4, assists: 3.7, steals: 1.4, blocks: 0.5, fieldGoalPct: 0.453, threePointPct: 0.318, freeThrowPct: 0.751 } },
   ],
+  ...NBA_CURATED_EXPANSION_ROSTERS,
+  ...NBA_FRANCHISE_DEPTH_ROSTERS,
 };
 
-const FIRST_NAMES = ['Marcus', 'DeShawn', 'Tyrell', 'Jordan', 'Andre', 'Kevin', 'Darius', 'Malik', 'Jalen', 'Trae', 'Donovan', 'Bam', 'Jaylen', 'Brandon', 'Miles', 'Gary', 'Isaiah', 'Chris', 'Paul', 'Tony', 'Dwight', 'Shawn', 'Allen', 'Grant', 'Chauncey'];
-const LAST_NAMES  = ['Williams', 'Johnson', 'Mitchell', 'Davis', 'Brown', 'Thompson', 'Jackson', 'Harris', 'Robinson', 'Walker', 'Carter', 'Edwards', 'Green', 'Baker', 'Nelson', 'Hill', 'Thomas', 'Martin', 'Scott', 'Young', 'Collins', 'Parker', 'Adams', 'Moore', 'White'];
-
-function fakeName(seed: number): string {
-  return `${FIRST_NAMES[seed % FIRST_NAMES.length]} ${LAST_NAMES[(seed * 7 + 3) % LAST_NAMES.length]}`;
+function keyTeamId(key: string): string {
+  return key.split('-')[0];
 }
 
-export const NBA_CURATED_ERA_KEYS = Object.keys(NBA_HISTORICAL_ROSTERS);
+function keyStartYear(key: string): number {
+  return Number(key.split('-').at(-1));
+}
+
+function rosterNameSet(players: HistoricalNBAPlayer[]): Set<string> {
+  return new Set(players.map(player => normalizePlayerName(player.name)));
+}
+
+function adjacentRosterOverlap(a: HistoricalNBAPlayer[], b: HistoricalNBAPlayer[]): number {
+  const aNames = rosterNameSet(a);
+  const bNames = rosterNameSet(b);
+  const matches = [...aNames].filter(name => bNames.has(name)).length;
+  return Math.max(matches / Math.max(1, aNames.size), matches / Math.max(1, bNames.size));
+}
+
+function buildCombinedRosterGroups(): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  const keysByTeam = Object.keys(NBA_HISTORICAL_ROSTERS).reduce<Record<string, string[]>>((acc, key) => {
+    const teamId = keyTeamId(key);
+    acc[teamId] = acc[teamId] ?? [];
+    acc[teamId].push(key);
+    return acc;
+  }, {});
+
+  Object.values(keysByTeam).forEach(teamKeys => {
+    const sorted = teamKeys.sort((a, b) => keyStartYear(a) - keyStartYear(b));
+    let currentGroup: string[] = [];
+
+    sorted.forEach(key => {
+      const previous = currentGroup.at(-1);
+      const isAdjacentDuplicate = Boolean(
+        previous &&
+        keyStartYear(key) - keyStartYear(previous) === 5 &&
+        adjacentRosterOverlap(NBA_HISTORICAL_ROSTERS[previous], NBA_HISTORICAL_ROSTERS[key]) >= 0.5
+      );
+
+      if (isAdjacentDuplicate) {
+        currentGroup.push(key);
+        return;
+      }
+
+      if (currentGroup.length > 0) groups.set(currentGroup[0], currentGroup);
+      currentGroup = [key];
+    });
+
+    if (currentGroup.length > 0) groups.set(currentGroup[0], currentGroup);
+  });
+
+  return groups;
+}
+
+const NBA_COMBINED_ROSTER_GROUPS = buildCombinedRosterGroups();
+const NBA_HIDDEN_COMBINED_ERA_KEYS = new Set(
+  [...NBA_COMBINED_ROSTER_GROUPS.values()].flatMap(keys => keys.slice(1))
+);
+
+export const NBA_CURATED_ERA_KEYS = Object.keys(NBA_HISTORICAL_ROSTERS)
+  .filter(key => !NBA_HIDDEN_COMBINED_ERA_KEYS.has(key))
+  .sort();
+export const NBA_PLAYABLE_ERA_COUNT = NBA_CURATED_ERA_KEYS.length;
+const NBA_CURATED_ERA_KEY_SET = new Set(NBA_CURATED_ERA_KEYS);
 
 const CHAMPIONSHIP_ERAS = new Set([
   '14-nba-14-1980', '14-nba-14-1985', '14-nba-14-2000', '14-nba-14-2005',
@@ -683,21 +747,35 @@ function applyChampionshipCoreFloors(key: string, players: Player[]): Player[] {
     .sort((a, b) => b.playerScore - a.playerScore);
 }
 
-export async function fetchNBAPlayers(team: HistoricalTeam, era: Era, _apiKey?: string): Promise<Player[]> {
-  const key = `${team.id}-${era.id}`;
+export function nbaCuratedEraKey(teamId: string, eraId: string): string {
+  return `${teamId}-${eraId}`;
+}
 
-  // Curated historical eras must win over live data. Otherwise 2020-2024
-  // historical teams can accidentally show today's ESPN roster.
-  if (NBA_HISTORICAL_ROSTERS[key]) {
-    const players = NBA_HISTORICAL_ROSTERS[key].map((hp, i) => {
+export function isCuratedNBAEraKey(key: string): boolean {
+  return NBA_CURATED_ERA_KEY_SET.has(key);
+}
+
+export function getCuratedNBAPlayers(team: HistoricalTeam, era: Era): Player[] | null {
+  const key = nbaCuratedEraKey(team.id, era.id);
+  if (NBA_HIDDEN_COMBINED_ERA_KEYS.has(key)) return null;
+  const rosterKeys = NBA_COMBINED_ROSTER_GROUPS.get(key) ?? [key];
+  if (!rosterKeys.some(rosterKey => NBA_HISTORICAL_ROSTERS[rosterKey])) return null;
+  const combinedEndYear = Math.max(
+    era.endYear,
+    ...rosterKeys.map(rosterKey => keyStartYear(rosterKey) + 4)
+  );
+
+  const players = rosterKeys.flatMap(rosterKey => {
+    const roster = NBA_HISTORICAL_ROSTERS[rosterKey] ?? [];
+    return roster.map((hp, i) => {
       const p: Player = {
-        id: `nba-hist-${team.id}-${era.id}-${i}`,
+        id: `nba-hist-${team.id}-${rosterKey.replace(/[^a-zA-Z0-9-]/g, '-')}-${i}`,
         name: hp.name,
         position: hp.position,
         positionGroup: 'offense',
         eraId: era.id,
         teamId: team.id,
-        yearsWithTeam: `${era.startYear}–${era.endYear}`,
+        yearsWithTeam: `${era.startYear}-${combinedEndYear}`,
         stats: bestStatsInEra(hp),
         playerScore: 0,
         isLegend: hp.isLegend,
@@ -706,8 +784,77 @@ export async function fetchNBAPlayers(team: HistoricalTeam, era: Era, _apiKey?: 
       p.playerScore = computePlayerScore(p, 'nba');
       return p;
     });
-    return applyChampionshipCoreFloors(key, players);
+  });
+
+  const dedupedPlayers = [...players.reduce<Map<string, Player>>((byName, player) => {
+    const nameKey = normalizePlayerName(player.name);
+    const existing = byName.get(nameKey);
+    if (!existing || player.playerScore > existing.playerScore) byName.set(nameKey, player);
+    return byName;
+  }, new Map()).values()];
+
+  return applyChampionshipCoreFloors(key, dedupedPlayers);
+}
+
+export function curatedEraWeight(players: Player[]): number {
+  const hasMultipleElitePlayers = players.filter(player => player.playerScore >= 90).length >= 2;
+  const hasMultipleLegendPlayers = players.filter(player => player.isLegend).length >= 2;
+  let weight = 1;
+  if (hasMultipleElitePlayers) weight *= 0.86;
+  if (hasMultipleLegendPlayers) weight *= 0.88;
+  return Math.max(0.74, Math.round(weight * 1000) / 1000);
+}
+
+export interface CuratedNBAEraCatalogEntry {
+  key: string;
+  team: HistoricalTeam;
+  era: Era;
+  weight: number;
+  elitePlayerCount: number;
+  legendCount: number;
+}
+
+let curatedCatalogCache: CuratedNBAEraCatalogEntry[] | null = null;
+
+export function getCuratedNBAEraCatalog(): CuratedNBAEraCatalogEntry[] {
+  if (!curatedCatalogCache) {
+    curatedCatalogCache = NBA_TEAMS.flatMap(team =>
+      generateTeamEras(team)
+        .map(era => {
+          const key = nbaCuratedEraKey(team.id, era.id);
+          if (!isCuratedNBAEraKey(key)) return null;
+          const players = getCuratedNBAPlayers(team, era);
+          if (!players) return null;
+          const rosterKeys = NBA_COMBINED_ROSTER_GROUPS.get(key) ?? [key];
+          const endYear = Math.max(...rosterKeys.map(rosterKey => keyStartYear(rosterKey) + 4), era.endYear);
+          const catalogEra = rosterKeys.length > 1
+            ? {
+                ...era,
+                endYear,
+                name: `${era.name} + ${rosterKeys.length - 1} adjacent era${rosterKeys.length > 2 ? 's' : ''}`,
+                description: `${era.description} Combined with adjacent roster-overlap era${rosterKeys.length > 2 ? 's' : ''} through ${endYear}.`,
+              }
+            : era;
+          return {
+            key,
+            team,
+            era: catalogEra,
+            weight: curatedEraWeight(players),
+            elitePlayerCount: players.filter(player => player.playerScore >= 90).length,
+            legendCount: players.filter(player => player.isLegend).length,
+          };
+        })
+        .filter((entry): entry is CuratedNBAEraCatalogEntry => entry !== null)
+    );
   }
+
+  return curatedCatalogCache;
+}
+
+export async function fetchNBAPlayers(team: HistoricalTeam, era: Era): Promise<Player[]> {
+  const key = `${team.id}-${era.id}`;
+  const curatedPlayers = getCuratedNBAPlayers(team, era);
+  if (curatedPlayers) return curatedPlayers;
 
   // For non-curated current eras, try ESPN live roster so trade news is reflected.
   if (era.startYear >= LIVE_ERA_THRESHOLD) {
@@ -717,46 +864,5 @@ export async function fetchNBAPlayers(team: HistoricalTeam, era: Era, _apiKey?: 
     }
   }
 
-  // Final fallback: generate plausible-looking players
-  return generateFallbackNBAPlayers(team, era);
-}
-
-// 15-player era pool (5 starters + 10 rotation players)
-const STARTER_TEMPLATES: Array<{ pos: Player['position']; idx: number }> = [
-  { pos: 'PG', idx: 0 }, { pos: 'SG', idx: 1 }, { pos: 'SF', idx: 2 }, { pos: 'PF', idx: 3 }, { pos: 'C',  idx: 4 },
-  { pos: 'PG', idx: 5 }, { pos: 'SG', idx: 6 }, { pos: 'SF', idx: 7 }, { pos: 'PF', idx: 8 }, { pos: 'C',  idx: 9 },
-  { pos: 'PG', idx: 10 }, { pos: 'SG', idx: 11 }, { pos: 'SF', idx: 12 }, { pos: 'PF', idx: 13 }, { pos: 'C', idx: 14 },
-];
-
-function generateFallbackNBAPlayers(team: HistoricalTeam, era: Era): Player[] {
-  const teamSeed = parseInt(team.id, 10) * 13;
-
-  return STARTER_TEMPLATES.map(({ pos, idx }) => {
-    const s = teamSeed + idx;
-    // Generate peak-season caliber stats (not average — this is their best year)
-    const basePts = pos === 'PG' ? 22 : pos === 'SG' ? 20 : pos === 'SF' ? 19 : pos === 'PF' ? 17 : 15;
-    const pts = basePts + (s % 12);
-    const p: Player = {
-      id: `nba-fb-${team.id}-${era.id}-${idx}`,
-      name: fakeName(s),
-      position: pos,
-      positionGroup: 'offense',
-      eraId: era.id,
-      teamId: team.id,
-      yearsWithTeam: `${era.startYear}–${era.endYear}`,
-      stats: {
-        points: pts,
-        rebounds: (pos === 'C' ? 10 : pos === 'PF' ? 8 : 4) + (s * 3 % 4),
-        assists: (pos === 'PG' ? 7 : pos === 'SG' ? 4 : 3) + (s * 5 % 4),
-        steals: Math.round(((s % 18) / 10) * 10) / 10,
-        blocks: pos === 'C' ? 1.5 + (s % 10) / 10 : Math.round(((s * 2 % 12) / 10) * 10) / 10,
-        fieldGoalPct: (pos === 'C' ? 0.52 : 0.44) + (s * 7 % 10) / 100,
-        threePointPct: (pos === 'PG' || pos === 'SG' ? 0.36 : 0.32) + (s * 11 % 8) / 100,
-        freeThrowPct: 0.74 + (s * 9 % 18) / 100,
-      },
-      playerScore: 0,
-    };
-    p.playerScore = computePlayerScore(p, 'nba');
-    return p;
-  }).sort((a, b) => b.playerScore - a.playerScore);
+  throw new Error(`No validated NBA roster for ${key}`);
 }

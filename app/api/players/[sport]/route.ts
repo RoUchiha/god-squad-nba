@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { PlayersResponse } from '@/lib/types';
 import { generateTeamEras } from '@/lib/constants';
-import { NBA_TEAMS, fetchNBAPlayers } from '@/lib/sports/nba';
-import { getServerEnv } from '@/lib/serverEnv';
+import { NBA_TEAMS, fetchNBAPlayers, isCuratedNBAEraKey, nbaCuratedEraKey } from '@/lib/sports/nba';
 import { checkRateLimit, getClientIp } from '@/lib/security';
 
 const QuerySchema = z.object({
@@ -42,15 +41,21 @@ export async function GET(req: NextRequest) {
   if (!era) {
     return NextResponse.json({ error: 'Era not found for this team' }, { status: 404 });
   }
+  if (!isCuratedNBAEraKey(nbaCuratedEraKey(team.id, era.id))) {
+    return NextResponse.json({ error: 'No validated roster for this team-era' }, { status: 404 });
+  }
 
   try {
-    const players = await fetchNBAPlayers(team, era, getServerEnv().BALLDONTLIE_API_KEY);
+    const players = await fetchNBAPlayers(team, era);
     const response: PlayersResponse = { players, era, team };
     return NextResponse.json(response, {
       headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
     });
-  } catch (err) {
-    console.error('[players/nba] Error:', err instanceof Error ? err.message : 'Unknown');
-    return NextResponse.json({ error: 'Failed to fetch player data.' }, { status: 502 });
+  } catch {
+    console.error('[players/nba] Failed to load a validated roster');
+    return NextResponse.json({ error: 'Failed to fetch player data.' }, {
+      status: 502,
+      headers: { 'Cache-Control': 'no-store' },
+    });
   }
 }

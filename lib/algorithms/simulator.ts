@@ -18,6 +18,7 @@ import {
   rankLeagueStandings,
   simulateLeagueStandings,
 } from '../nbaLeague';
+import { effectivePlayerScore } from '../effectivePlayerScore';
 
 const WIN_PROB_CONFIG = { base: 0.620, range: 0.3785, power: 2.05 };
 
@@ -76,19 +77,22 @@ function simulateRosterStats(
   rand: () => number
 ): PlayerSeasonStatLine[] {
   const filled = slots.filter(slot => slot.player);
-  const players = filled.map(slot => slot.player!);
-  if (players.length === 0) return [];
+  if (filled.length === 0) return [];
 
   const targetPoints = 108 + teamPower.offenseScore * 0.16;
   const targetRebounds = 41 + teamPower.defenseScore * 0.055;
   const targetAssists = 21 + teamPower.offenseScore * 0.085;
   const sum = (values: number[]) => values.reduce((total, value) => total + value, 0) || 1;
-  const pointScale = targetPoints / sum(players.map(player => player.stats.points ?? player.playerScore * 0.22));
-  const reboundScale = targetRebounds / sum(players.map(player => player.stats.rebounds ?? 4));
-  const assistScale = targetAssists / sum(players.map(player => player.stats.assists ?? 3));
+  const pointScale = targetPoints / sum(filled.map(slot => {
+    const player = slot.player!;
+    return player.stats.points ?? effectivePlayerScore(slot, player) * 0.22;
+  }));
+  const reboundScale = targetRebounds / sum(filled.map(slot => slot.player!.stats.rebounds ?? 4));
+  const assistScale = targetAssists / sum(filled.map(slot => slot.player!.stats.assists ?? 3));
 
   return filled.map(slot => {
     const player = slot.player!;
+    const playerScore = effectivePlayerScore(slot, player);
     const variance = 0.96 + rand() * 0.08;
     const sixthMan = slot.id === '6man';
     return {
@@ -96,10 +100,10 @@ function simulateRosterStats(
       name: player.name,
       position: player.position,
       slotLabel: slot.label,
-      playerScore: player.playerScore,
+      playerScore,
       gamesPlayed: Math.max(62, Math.min(82, Math.round(78 + rand() * 5 - (sixthMan ? 1 : 0)))),
-      minutes: oneDecimal((sixthMan ? 27.5 : 31.5) + player.playerScore * 0.035 + rand() * 1.6),
-      points: oneDecimal((player.stats.points ?? player.playerScore * 0.22) * pointScale * variance),
+      minutes: oneDecimal((sixthMan ? 27.5 : 31.5) + playerScore * 0.035 + rand() * 1.6),
+      points: oneDecimal((player.stats.points ?? playerScore * 0.22) * pointScale * variance),
       rebounds: oneDecimal((player.stats.rebounds ?? 4) * reboundScale * variance),
       assists: oneDecimal((player.stats.assists ?? 3) * assistScale * variance),
       steals: oneDecimal((player.stats.steals ?? 0.8) * (0.94 + rand() * 0.12)),

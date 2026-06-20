@@ -19,11 +19,13 @@ html {
 }
 
 body {
-  background-color: #090806;
+  background-color: #101211;
   background-image:
-    linear-gradient(rgba(9, 8, 6, 0.90), rgba(9, 8, 6, 0.96)),
-    repeating-linear-gradient(90deg, #382213 0, #382213 72px, #2c1a10 73px, #2c1a10 145px);
+    linear-gradient(180deg, rgba(7, 9, 8, 0.18), rgba(10, 9, 8, 0.38)),
+    url('/basketball-court-texture.webp');
   background-attachment: fixed;
+  background-position: center top;
+  background-size: cover;
   color: #e5e7eb;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -102,8 +104,8 @@ body {
 
 /* Undefeated celebration */
 @keyframes celebration-pulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 30px #ff4444; }
-  50% { transform: scale(1.02); box-shadow: 0 0 60px #ff4444, 0 0 100px rgba(255,68,68,0.5); }
+  0%, 100% { box-shadow: 0 0 30px #ff4444; }
+  50% { box-shadow: 0 0 60px #ff4444, 0 0 100px rgba(255,68,68,0.5); }
 }
 
 .celebrate {

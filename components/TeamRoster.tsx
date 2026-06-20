@@ -1,27 +1,40 @@
 'use client';
 
 import { useState } from 'react';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw, Shuffle, X } from 'lucide-react';
 import type { FilledRosterSlot, Sport, Player } from '@/lib/types';
+import { effectivePlayerScore } from '@/lib/effectivePlayerScore';
+import { slotAcceptsPlayer } from '@/lib/playerIdentity';
 import { playerRoleLabel } from '@/lib/playerRoles';
 
 interface Props {
   slots: FilledRosterSlot[];
   sport: Sport;
   onPositionSwap: (slotId: string, position: Player['position'] | Player['position'][]) => void;
+  onRosterSwapTarget: (slotId: string) => void;
   positionSwapUsed: boolean;
   activeSwapSlotId: string | null;
+  invalidSwapSlotId: string | null;
   justPlacedSlotId: string | null;
+  onGamble: (slotId: string) => void;
+  gambleAvailable: boolean;
+  gamblePending: boolean;
 }
 
 export default function TeamRoster({
   slots,
   onPositionSwap,
+  onRosterSwapTarget,
   positionSwapUsed,
   activeSwapSlotId,
+  invalidSwapSlotId,
   justPlacedSlotId,
+  onGamble,
+  gambleAvailable,
+  gamblePending,
 }: Props) {
-  const [inspectedPlayer, setInspectedPlayer] = useState<Player | null>(null);
+  const [inspectedSlot, setInspectedSlot] = useState<FilledRosterSlot | null>(null);
+  const activeSwapSlot = activeSwapSlotId ? slots.find(slot => slot.id === activeSwapSlotId) ?? null : null;
 
   return (
     <div className="flex flex-col">
@@ -33,15 +46,21 @@ export default function TeamRoster({
             key={slot.id}
             slot={slot}
             onPositionSwap={onPositionSwap}
+            onRosterSwapTarget={onRosterSwapTarget}
             positionSwapUsed={positionSwapUsed}
+            activeSwapSlot={activeSwapSlot}
             isActiveSwap={slot.id === activeSwapSlotId}
+            isInvalidSwapTarget={slot.id === invalidSwapSlotId}
             isJustPlaced={slot.id === justPlacedSlotId}
-            onInspect={setInspectedPlayer}
+            onInspect={setInspectedSlot}
+            onGamble={onGamble}
+            canGamble={gambleAvailable}
+            gamblePending={gamblePending}
           />
         ))}
       </div>
-      {inspectedPlayer && (
-        <PlayerDetailCard player={inspectedPlayer} onClose={() => setInspectedPlayer(null)} />
+      {inspectedSlot?.player && (
+        <PlayerDetailCard slot={inspectedSlot} player={inspectedSlot.player} onClose={() => setInspectedSlot(null)} />
       )}
     </div>
   );
@@ -50,17 +69,29 @@ export default function TeamRoster({
 function RosterSlot({
   slot,
   onPositionSwap,
+  onRosterSwapTarget,
   positionSwapUsed,
+  activeSwapSlot,
   isActiveSwap,
+  isInvalidSwapTarget,
   isJustPlaced,
   onInspect,
+  onGamble,
+  canGamble,
+  gamblePending,
 }: {
   slot: FilledRosterSlot;
   isJustPlaced: boolean;
   isActiveSwap: boolean;
+  isInvalidSwapTarget: boolean;
+  activeSwapSlot: FilledRosterSlot | null;
   onPositionSwap: (id: string, pos: Player['position'] | Player['position'][]) => void;
+  onRosterSwapTarget: (id: string) => void;
   positionSwapUsed: boolean;
-  onInspect: (player: Player) => void;
+  onInspect: (slot: FilledRosterSlot) => void;
+  onGamble: (slotId: string) => void;
+  canGamble: boolean;
+  gamblePending: boolean;
 }) {
   const posLabel = Array.isArray(slot.position) ? slot.position.join('/') : slot.position;
   if (!slot.player) {
@@ -73,26 +104,53 @@ function RosterSlot({
   }
 
   const player = slot.player;
+  const displayScore = effectivePlayerScore(slot, player);
+  const canCommitSwap = Boolean(
+    activeSwapSlot?.player &&
+    activeSwapSlot.id !== slot.id &&
+    slotAcceptsPlayer(slot, activeSwapSlot.player) &&
+    slotAcceptsPlayer(activeSwapSlot, player)
+  );
+  const isSwapCandidate = Boolean(activeSwapSlot && activeSwapSlot.id !== slot.id);
+  const slotToneClass = isActiveSwap
+    ? 'border-yellow-600/70 bg-yellow-950/40 ring-1 ring-yellow-500/30'
+    : isInvalidSwapTarget
+      ? 'animate-invalid-shake border-red-500/70 bg-red-950/40 ring-1 ring-red-500/30'
+      : canCommitSwap
+        ? 'border-yellow-500/70 bg-yellow-950/20 hover:bg-yellow-950/35'
+        : isJustPlaced
+          ? 'border-green-700/60 bg-green-950/40'
+          : 'border-white/10 bg-white/5 hover:border-orange-400/30 hover:bg-white/[0.08]';
+
   return (
     <div
-      className={`group flex w-full items-center rounded border transition-all duration-300 ${
-        isActiveSwap
-          ? 'border-yellow-600/70 bg-yellow-950/40 ring-1 ring-yellow-500/30'
-          : isJustPlaced
-            ? 'border-green-700/60 bg-green-950/40'
-            : 'border-white/10 bg-white/5 hover:border-orange-400/30 hover:bg-white/[0.08]'
-      }`}
+      className={`group flex w-full items-center rounded border transition-all duration-300 ${slotToneClass}`}
     >
-      <button type="button" onClick={() => onInspect(player)} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left">
+      <button
+        type="button"
+        onClick={() => isSwapCandidate ? onRosterSwapTarget(slot.id) : onInspect(slot)}
+        className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
+      >
         <span className="w-8 flex-shrink-0 text-[10px] font-bold text-gray-500">{posLabel}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold text-white">{player.name}</span>
           <span className="block text-[10px] text-gray-600">{player.yearsWithTeam} | {playerRoleLabel(player)}</span>
         </span>
-        <span className="text-sm font-bold tabular-nums" style={{ color: scoreColor(player.playerScore) }}>
-          {Math.round(player.playerScore)}
+        <span className="text-sm font-bold tabular-nums" style={{ color: scoreColor(displayScore) }}>
+          {Math.round(displayScore)}
         </span>
       </button>
+      {canGamble && (
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); onGamble(slot.id); }}
+          disabled={gamblePending}
+          title="Gamble this roster spot"
+          className="mr-1 p-1 text-yellow-500 opacity-0 transition-opacity hover:text-yellow-300 focus:opacity-100 disabled:cursor-wait disabled:opacity-40 group-hover:opacity-100"
+        >
+          <Shuffle size={14} aria-hidden="true" />
+        </button>
+      )}
       {!positionSwapUsed && (
         <button
           type="button"
@@ -107,7 +165,8 @@ function RosterSlot({
   );
 }
 
-function PlayerDetailCard({ player, onClose }: { player: Player; onClose: () => void }) {
+function PlayerDetailCard({ slot, player, onClose }: { slot: FilledRosterSlot; player: Player; onClose: () => void }) {
+  const displayScore = effectivePlayerScore(slot, player);
   const countingStats = [
     ['PPG', player.stats.points],
     ['RPG', player.stats.rebounds],
@@ -156,7 +215,7 @@ function PlayerDetailCard({ player, onClose }: { player: Player; onClose: () => 
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-4">
           <span className="text-xs text-gray-500">God Squad player rating</span>
-          <span className="text-3xl font-black text-orange-400">{Math.round(player.playerScore)}</span>
+          <span className="text-3xl font-black text-orange-400">{Math.round(displayScore)}</span>
         </div>
       </section>
     </div>

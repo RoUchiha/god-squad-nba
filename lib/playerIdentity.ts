@@ -6,9 +6,10 @@ export function normalizePlayerName(name: string): string {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[\u2018\u2019'.]/g, '')
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv)\b/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+    .trim();
 }
 
 export function isSamePlayer(a: Player, b: Player): boolean {

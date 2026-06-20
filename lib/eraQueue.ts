@@ -1,72 +1,133 @@
 /**
- * Client-side era queue — the ONLY source of truth for which team+era to show next.
+ * Client-side playable era queue.
  *
- * Builds a shuffled list of EVERY valid team+era combo (30 teams × ~11 eras ≈ 330 combos).
- * Popping from this list guarantees:
- *   - Every franchise appears before any franchise repeats
- *   - Every era appears at most once per game
- *   - Equal distribution across all teams
+ * The queue is built only from validated roster-backed team-era entries. It is
+ * a weighted permutation: elite-heavy eras are slightly less likely to appear
+ * early, but every entry remains in the run and can still be exhausted.
  */
 
 import type { Era, HistoricalTeam } from './types';
-import { generateTeamEras } from './constants';
-import { NBA_TEAMS, NBA_CURATED_ERA_KEYS } from './sports/nba';
+import { getCuratedNBAEraCatalog } from './sports/nba';
 
-export type EraQueueItem = { team: HistoricalTeam; era: Era };
+export type Rng = () => number;
 
-/** Fisher-Yates shuffle — unbiased O(n) */
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+export type EraQueueItem = {
+  key: string;
+  team: HistoricalTeam;
+  era: Era;
+  weight: number;
+  elitePlayerCount: number;
+  legendCount: number;
+};
+
+export interface EraQueueOptions {
+  rng?: Rng;
+  excludeKeys?: Iterable<string>;
+}
+
+function boundedRandom(rng: Rng): number {
+  const value = rng();
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(0.999999999, Math.max(0, value));
+}
+
+function weightedPickIndex(items: EraQueueItem[], rng: Rng): number {
+  const total = items.reduce((sum, item) => sum + Math.max(0.001, item.weight), 0);
+  let cursor = boundedRandom(rng) * total;
+
+  for (let i = 0; i < items.length; i++) {
+    cursor -= Math.max(0.001, items[i].weight);
+    if (cursor <= 0) return i;
   }
-  return a;
+
+  return items.length - 1;
 }
 
-function curatedEras(team: HistoricalTeam): Era[] {
-  return generateTeamEras(team).filter(era =>
-    NBA_CURATED_ERA_KEYS.includes(`${team.id}-${era.id}`)
-  );
+function weightedShuffle(items: EraQueueItem[], rng: Rng): EraQueueItem[] {
+  const remaining = [...items];
+  const shuffled: EraQueueItem[] = [];
+
+  while (remaining.length > 0) {
+    const index = weightedPickIndex(remaining, rng);
+    const [item] = remaining.splice(index, 1);
+    shuffled.push(item);
+  }
+
+  return shuffled;
 }
 
-/** One appearance per franchise, with a random curated era for that appearance. */
-export function buildEraQueue(): EraQueueItem[] {
-  return shuffle(NBA_TEAMS).flatMap(team => {
-    const eras = curatedEras(team);
-    if (eras.length === 0) return [];
-    return [{ team, era: eras[Math.floor(Math.random() * eras.length)] }];
-  });
+function removeQueueKey(queue: EraQueueItem[], key: string): EraQueueItem[] {
+  return queue.filter(item => item.key !== key);
 }
 
-/** Find the next queue item with a different team. Removes it from the queue. */
+function pickFromQueue(
+  queue: EraQueueItem[],
+  predicate: (item: EraQueueItem) => boolean,
+  rng: Rng
+): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
+  const candidates = queue.filter(predicate);
+  if (candidates.length === 0) return null;
+  const item = candidates[weightedPickIndex(candidates, rng)];
+  return { item, newQueue: removeQueueKey(queue, item.key) };
+}
+
+export function buildEraQueue(options: EraQueueOptions = {}): EraQueueItem[] {
+  const rng = options.rng ?? Math.random;
+  const excluded = new Set(options.excludeKeys ?? []);
+  const catalog = getCuratedNBAEraCatalog()
+    .filter(entry => !excluded.has(entry.key))
+    .map(entry => ({ ...entry }));
+
+  return weightedShuffle(catalog, rng);
+}
+
+export function hasTeamReroll(
+  queue: EraQueueItem[],
+  excludeTeamId: string,
+  currentEraStart: number,
+): boolean {
+  const allowedStarts = new Set([currentEraStart - 5, currentEraStart, currentEraStart + 5]);
+  return queue.some(item => item.team.id !== excludeTeamId && allowedStarts.has(item.era.startYear));
+}
+
+export function hasEraReroll(
+  queue: EraQueueItem[],
+  teamId: string,
+  excludeEraId: string,
+): boolean {
+  return queue.some(item => item.team.id === teamId && item.era.id !== excludeEraId);
+}
+
 export function rerollTeam(
   queue: EraQueueItem[],
   excludeTeamId: string,
   currentEraStart: number,
+  rng: Rng = Math.random,
 ): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
   const allowedStarts = new Set([currentEraStart - 5, currentEraStart, currentEraStart + 5]);
-  const idx = queue.findIndex(item =>
-    item.team.id !== excludeTeamId && curatedEras(item.team).some(era => allowedStarts.has(era.startYear))
+  return pickFromQueue(
+    queue,
+    item => item.team.id !== excludeTeamId && allowedStarts.has(item.era.startYear),
+    rng
   );
-  if (idx === -1) return null;
-  const newQueue = [...queue];
-  const [queuedItem] = newQueue.splice(idx, 1);
-  const eras = curatedEras(queuedItem.team).filter(era => allowedStarts.has(era.startYear));
-  const item = { team: queuedItem.team, era: eras[Math.floor(Math.random() * eras.length)] };
-  return { item, newQueue };
 }
 
-/** Find the next queue item with a different era. Removes it from the queue. */
 export function rerollEra(
   queue: EraQueueItem[],
   team: HistoricalTeam,
   excludeEraId: string,
+  rng: Rng = Math.random,
 ): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
-  const eras = curatedEras(team).filter(era => era.id !== excludeEraId);
-  if (eras.length === 0) return null;
-  return {
-    item: { team, era: eras[Math.floor(Math.random() * eras.length)] },
-    newQueue: queue,
-  };
+  return pickFromQueue(
+    queue,
+    item => item.team.id === team.id && item.era.id !== excludeEraId,
+    rng
+  );
+}
+
+export function pickGambleEra(
+  queue: EraQueueItem[],
+  rng: Rng = Math.random,
+): { item: EraQueueItem; newQueue: EraQueueItem[] } | null {
+  return pickFromQueue(queue, () => true, rng);
 }

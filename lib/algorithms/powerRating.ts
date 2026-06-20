@@ -1,5 +1,6 @@
 import type { Player, Sport, FilledRosterSlot, TeamPower, DraftMode } from '../types';
 import { clamp } from '../utils';
+import { playersWithEffectiveScores } from '../effectivePlayerScore';
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
@@ -409,8 +410,7 @@ export function computeTeamGSPR(
   sport: Sport,
   mode: DraftMode
 ): TeamPower {
-  const filled = slots.filter(s => s.player !== null);
-  const players = filled.map(s => s.player as Player);
+  const players = playersWithEffectiveScores(slots);
 
   if (players.length === 0) {
     return { gspr: 0, offenseScore: 0, defenseScore: 0, depthScore: 0, chemistryBonus: 0, tier: 'average', breakdown: [] };

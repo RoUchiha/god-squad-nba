@@ -20,15 +20,25 @@
  *   state.pendingLoad. Stale fetches are discarded via loadId.
  */
 
-import { useReducer, useEffect } from 'react';
+import { useReducer, useEffect, useRef } from 'react';
 import type {
   Era, HistoricalTeam, Player, FilledRosterSlot, Position,
   PlayersResponse, SeasonResults, RerollState,
 } from '@/lib/types';
 import { NBA_ROSTER, SPORT_CONFIG, getGsprTier } from '@/lib/constants';
 import { computeTeamGSPR } from '@/lib/algorithms/powerRating';
-import { buildEraQueue, rerollTeam, rerollEra, type EraQueueItem } from '@/lib/eraQueue';
+import {
+  buildEraQueue,
+  hasEraReroll,
+  hasTeamReroll,
+  pickGambleEra,
+  rerollTeam,
+  rerollEra,
+  type EraQueueItem,
+} from '@/lib/eraQueue';
+import { selectGambleReplacement } from '@/lib/gamble';
 import { hasFilledPrimarySlot, isFlexSlot, rosterHasPlayer, slotAcceptsPlayer } from '@/lib/playerIdentity';
+import { swapRosterSlots } from '@/lib/rosterActions';
 import EraCard from './EraCard';
 import PlayerPool from './PlayerPool';
 import TeamRoster from './TeamRoster';
@@ -46,15 +56,22 @@ interface PendingLoad {
   loadId: number;
 }
 
+interface PendingGambleLoad {
+  slotId: string;
+  candidates: EraQueueItem[];
+  loadId: number;
+}
+
 interface InvalidSelection {
   playerId: string;
   message: string;
   nonce: number;
 }
 
-interface GameState {
+export interface GameState {
   phase: 'loading' | 'ready' | 'placing' | 'complete';
   eraQueue: EraQueueItem[];
+  seenTeamEraKeys: Set<string>;
   era: Era | null;
   team: HistoricalTeam | null;
   players: Player[];
@@ -63,7 +80,13 @@ interface GameState {
   justPlacedSlotId: string | null;
   rerolls: RerollState;
   swapSlotId: string | null;
+  invalidRosterSlotId: string | null;
+  rosterActionMessage: string | null;
   positionSwapUsed: boolean;
+  gambleUsed: boolean;
+  gambleConfirmSlotId: string | null;
+  gamblePending: boolean;
+  pendingGamble: PendingGambleLoad | null;
   pendingLoad: PendingLoad | null;
   loadId: number;
   error: string | null;
@@ -71,10 +94,11 @@ interface GameState {
   simulationResult: SeasonResults | null;
   simulationCount: number;
   simulationPending: boolean;
+  gameplayLocked: boolean;
   showResults: boolean;
 }
 
-type GameAction =
+export type GameAction =
   | { type: 'NEW_GAME' }
   | { type: 'DRAFT_PLAYER'; player: Player }
   | { type: 'PLACE_PLAYER'; player: Player; slotId: string }
@@ -84,11 +108,17 @@ type GameAction =
   | { type: 'LOAD_ERROR'; loadId: number }
   | { type: 'REROLL_TEAM' }
   | { type: 'REROLL_ERA' }
-  | { type: 'ACTIVATE_SWAP'; slotId: string }
+  | { type: 'START_ROSTER_SWAP'; slotId: string }
+  | { type: 'COMMIT_ROSTER_SWAP'; slotId: string }
   | { type: 'CANCEL_SWAP' }
-  | { type: 'START_SIMULATION' }
-  | { type: 'SET_SIMULATION'; result: SeasonResults }
-  | { type: 'SIMULATION_FAILED' }
+  | { type: 'REQUEST_GAMBLE'; slotId: string }
+  | { type: 'CONFIRM_GAMBLE' }
+  | { type: 'CANCEL_GAMBLE' }
+  | { type: 'APPLY_GAMBLE'; slotId: string; item: EraQueueItem; player: Player; loadId: number }
+  | { type: 'GAMBLE_FAILED'; loadId: number; message: string }
+  | { type: 'START_SIMULATION'; loadId: number }
+  | { type: 'SET_SIMULATION'; result: SeasonResults; loadId: number }
+  | { type: 'SIMULATION_FAILED'; loadId: number }
   | { type: 'CLOSE_RESULTS' }
   | { type: 'CLEAR_ERROR' };
 
@@ -154,13 +184,25 @@ function invalidPick(state: GameState, player: Player, message: string): GameSta
 /** Pop next from queue (rebuilds if empty) and return a loading state. */
 function toNextPick(state: GameState, queue?: EraQueueItem[]): GameState {
   const q = queue ?? state.eraQueue;
-  const src = q.length > 0 ? q : buildEraQueue();
+  const src = q.length > 0 ? q : buildEraQueue({ excludeKeys: state.seenTeamEraKeys });
   const [next, ...rest] = src;
+  if (!next) {
+    return {
+      ...state,
+      phase: 'ready',
+      players: [],
+      pendingLoad: null,
+      error: 'No unused validated team-era options remain for this run.',
+    };
+  }
+  const seenTeamEraKeys = new Set(state.seenTeamEraKeys);
+  seenTeamEraKeys.add(next.key);
   const loadId = state.loadId + 1;
   return {
     ...state,
     phase: 'loading',
     eraQueue: rest,
+    seenTeamEraKeys,
     era: next.era,
     team: next.team,
     players: [],
@@ -174,7 +216,7 @@ function toNextPick(state: GameState, queue?: EraQueueItem[]): GameState {
 
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 
-function reducer(state: GameState, action: GameAction): GameState {
+export function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
 
     case 'NEW_GAME': {
@@ -184,13 +226,19 @@ function reducer(state: GameState, action: GameAction): GameState {
         slots: freshSlots(currentExtraPosition(state.slots)),
         rerolls: { teamUsed: false, eraUsed: false },
         swapSlotId: null,
+        invalidRosterSlotId: null,
+        rosterActionMessage: null,
         positionSwapUsed: false,
+        gambleUsed: false,
+        gambleConfirmSlotId: null,
+        gamblePending: false,
+        pendingGamble: null,
         simulationResult: null,
         simulationCount: 0,
         simulationPending: false,
+        gameplayLocked: false,
         showResults: false,
         error: null,
-        loadId: 0,
         eraQueue: q,
         era: null,
         team: null,
@@ -199,6 +247,7 @@ function reducer(state: GameState, action: GameAction): GameState {
         justPlacedSlotId: null,
         invalidSelection: null,
         pendingLoad: null,
+        seenTeamEraKeys: new Set<string>(),
       }, q);
     }
 
@@ -212,42 +261,17 @@ function reducer(state: GameState, action: GameAction): GameState {
     // No refs, no closures, no races. The reducer always receives current state.
     // ─────────────────────────────────────────────────────────────────────────
     case 'DRAFT_PLAYER': {
-      if (state.phase !== 'ready') return state; // ← THE GUARD
+      if (state.phase !== 'ready' || state.gameplayLocked) return state; // ← THE GUARD
 
       const { player } = action;
+
+      if (state.swapSlotId) {
+        return invalidPick(state, player, 'Choose another filled roster spot to complete the swap.');
+      }
 
       // Belt-and-suspenders: player already placed → just advance
       if (rosterHasPlayer(state.slots, player)) {
         return invalidPick(state, player, 'That player is already on your roster.');
-      }
-
-      // Swap mode: fill the designated slot directly
-      if (state.swapSlotId) {
-        const targetSlot = state.slots.find(s => s.id === state.swapSlotId);
-        if (!targetSlot || !slotAcceptsPlayer(targetSlot, player)) {
-          return invalidPick(state, player, 'That player does not fit the selected roster spot.');
-        }
-        const newSlots = placeInSlot(state.slots, state.swapSlotId, player);
-        if (isComplete(newSlots)) {
-          return {
-            ...state,
-            phase: 'complete',
-            slots: newSlots,
-            swapSlotId: null,
-            positionSwapUsed: true,
-            players: [],
-            justPlacedSlotId: state.swapSlotId,
-            invalidSelection: null,
-          };
-        }
-        return toNextPick({
-          ...state,
-          slots: newSlots,
-          swapSlotId: null,
-          positionSwapUsed: true,
-          justPlacedSlotId: state.swapSlotId,
-          invalidSelection: null,
-        });
       }
 
       const compat = compatibleSlots(state.slots, player);
@@ -274,7 +298,7 @@ function reducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'PLACE_PLAYER': {
-      if (state.phase !== 'placing') return state;
+      if (state.phase !== 'placing' || state.gameplayLocked) return state;
       const newSlots = placeInSlot(state.slots, action.slotId, action.player);
       if (isComplete(newSlots)) {
         return { ...state, phase: 'complete', slots: newSlots, playerToPlace: null, players: [], justPlacedSlotId: action.slotId, invalidSelection: null };
@@ -283,7 +307,7 @@ function reducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'SKIP_PICK': {
-      if (state.phase !== 'ready') return state;
+      if (state.phase !== 'ready' || state.gameplayLocked) return state;
       return toNextPick(state);
     }
 
@@ -303,15 +327,18 @@ function reducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'REROLL_TEAM': {
-      if (state.rerolls.teamUsed || !state.team || state.phase !== 'ready') return state;
+      if (state.gameplayLocked || state.rerolls.teamUsed || !state.team || state.phase !== 'ready') return state;
       if (!state.era) return state;
       const result = rerollTeam(state.eraQueue, state.team.id, state.era.startYear);
-      if (!result) return state;
+      if (!result) return { ...state, error: 'No unused team reroll is available near this era.' };
+      const seenTeamEraKeys = new Set(state.seenTeamEraKeys);
+      seenTeamEraKeys.add(result.item.key);
       const loadId = state.loadId + 1;
       return {
         ...state,
         rerolls: { ...state.rerolls, teamUsed: true },
         eraQueue: result.newQueue,
+        seenTeamEraKeys,
         phase: 'loading',
         era: result.item.era,
         team: result.item.team,
@@ -323,14 +350,17 @@ function reducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'REROLL_ERA': {
-      if (state.rerolls.eraUsed || !state.era || !state.team || state.phase !== 'ready') return state;
+      if (state.gameplayLocked || state.rerolls.eraUsed || !state.era || !state.team || state.phase !== 'ready') return state;
       const result = rerollEra(state.eraQueue, state.team, state.era.id);
-      if (!result) return state;
+      if (!result) return { ...state, error: 'No unused era reroll is available for this team.' };
+      const seenTeamEraKeys = new Set(state.seenTeamEraKeys);
+      seenTeamEraKeys.add(result.item.key);
       const loadId = state.loadId + 1;
       return {
         ...state,
         rerolls: { ...state.rerolls, eraUsed: true },
         eraQueue: result.newQueue,
+        seenTeamEraKeys,
         phase: 'loading',
         era: result.item.era,
         team: result.item.team,
@@ -341,26 +371,126 @@ function reducer(state: GameState, action: GameAction): GameState {
       };
     }
 
-    case 'ACTIVATE_SWAP': {
-      if (state.phase !== 'ready') return state;
+    case 'START_ROSTER_SWAP': {
+      if (state.phase !== 'ready' || state.gameplayLocked) return state;
       if (state.positionSwapUsed || state.swapSlotId) return state;
       const targetSlot = state.slots.find(s => s.id === action.slotId);
       if (!targetSlot?.player) return state;
       return {
         ...state,
         swapSlotId: action.slotId,
+        invalidRosterSlotId: null,
+        rosterActionMessage: null,
         invalidSelection: null,
       };
     }
 
+    case 'COMMIT_ROSTER_SWAP': {
+      if (state.phase !== 'ready' || state.gameplayLocked || !state.swapSlotId) return state;
+      const newSlots = swapRosterSlots(state.slots, state.swapSlotId, action.slotId);
+      if (!newSlots) {
+        return {
+          ...state,
+          invalidRosterSlotId: action.slotId,
+          rosterActionMessage: 'Those two roster spots are not position-compatible.',
+        };
+      }
+
+      return {
+        ...state,
+        slots: newSlots,
+        swapSlotId: null,
+        invalidRosterSlotId: null,
+        rosterActionMessage: null,
+        positionSwapUsed: true,
+        justPlacedSlotId: action.slotId,
+      };
+    }
+
     case 'CANCEL_SWAP':
-      return { ...state, swapSlotId: null };
+      return { ...state, swapSlotId: null, invalidRosterSlotId: null, rosterActionMessage: null };
+
+    case 'REQUEST_GAMBLE': {
+      if (state.phase !== 'complete' || state.gameplayLocked || state.gambleUsed || state.gamblePending) return state;
+      const slot = state.slots.find(item => item.id === action.slotId);
+      if (!slot?.player) return state;
+      return { ...state, gambleConfirmSlotId: action.slotId, error: null };
+    }
+
+    case 'CANCEL_GAMBLE':
+      return { ...state, gambleConfirmSlotId: null };
+
+    case 'CONFIRM_GAMBLE': {
+      if (state.phase !== 'complete' || state.gameplayLocked || state.gambleUsed || state.gamblePending || !state.gambleConfirmSlotId) return state;
+      const candidates = state.eraQueue.length > 0
+        ? state.eraQueue
+        : buildEraQueue({ excludeKeys: state.seenTeamEraKeys });
+      if (candidates.length === 0) {
+        return {
+          ...state,
+          gambleConfirmSlotId: null,
+          error: 'No unused validated team-eras remain for a Gamble.',
+        };
+      }
+      const loadId = state.loadId + 1;
+      return {
+        ...state,
+        gambleConfirmSlotId: null,
+        gamblePending: true,
+        pendingGamble: { slotId: state.gambleConfirmSlotId, candidates, loadId },
+        loadId,
+        error: null,
+      };
+    }
+
+    case 'APPLY_GAMBLE': {
+      if (state.gameplayLocked || !state.pendingGamble || action.loadId !== state.pendingGamble.loadId || action.slotId !== state.pendingGamble.slotId) return state;
+      const seenTeamEraKeys = new Set(state.seenTeamEraKeys);
+      seenTeamEraKeys.add(action.item.key);
+      return {
+        ...state,
+        slots: placeInSlot(state.slots, action.slotId, action.player),
+        eraQueue: state.eraQueue.filter(item => item.key !== action.item.key),
+        seenTeamEraKeys,
+        gambleUsed: true,
+        gamblePending: false,
+        pendingGamble: null,
+        justPlacedSlotId: action.slotId,
+        simulationResult: null,
+        simulationCount: 0,
+        showResults: false,
+        error: null,
+      };
+    }
+
+    case 'GAMBLE_FAILED':
+      if (!state.pendingGamble || action.loadId !== state.pendingGamble.loadId) return state;
+      return {
+        ...state,
+        gamblePending: false,
+        pendingGamble: null,
+        error: action.message,
+      };
 
     case 'START_SIMULATION':
-      if (state.phase !== 'complete' || state.simulationCount >= 2 || state.simulationPending) return state;
-      return { ...state, simulationPending: true };
+      if (
+        state.phase !== 'complete' ||
+        state.simulationCount >= 2 ||
+        state.simulationPending ||
+        state.gamblePending ||
+        state.gambleConfirmSlotId
+      ) return state;
+      return {
+        ...state,
+        gameplayLocked: true,
+        simulationPending: true,
+        swapSlotId: null,
+        gambleConfirmSlotId: null,
+        loadId: action.loadId,
+      };
 
     case 'SET_SIMULATION':
+      if (!state.simulationPending || action.loadId !== state.loadId) return state;
       return {
         ...state,
         simulationResult: action.result,
@@ -370,7 +500,8 @@ function reducer(state: GameState, action: GameAction): GameState {
       };
 
     case 'SIMULATION_FAILED':
-      return { ...state, simulationPending: false };
+      if (!state.simulationPending || action.loadId !== state.loadId) return state;
+      return { ...state, simulationPending: false, error: 'Simulation failed. Try again.' };
 
     case 'CLOSE_RESULTS':
       return { ...state, showResults: false };
@@ -385,9 +516,10 @@ function reducer(state: GameState, action: GameAction): GameState {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const INITIAL: GameState = {
+export const INITIAL_GAME_STATE: GameState = {
   phase: 'loading',
   eraQueue: [],
+  seenTeamEraKeys: new Set<string>(),
   era: null,
   team: null,
   players: [],
@@ -396,7 +528,13 @@ const INITIAL: GameState = {
   justPlacedSlotId: null,
   rerolls: { teamUsed: false, eraUsed: false },
   swapSlotId: null,
+  invalidRosterSlotId: null,
+  rosterActionMessage: null,
   positionSwapUsed: false,
+  gambleUsed: false,
+  gambleConfirmSlotId: null,
+  gamblePending: false,
+  pendingGamble: null,
   pendingLoad: null,
   loadId: 0,
   error: null,
@@ -404,11 +542,13 @@ const INITIAL: GameState = {
   simulationResult: null,
   simulationCount: 0,
   simulationPending: false,
+  gameplayLocked: false,
   showResults: false,
 };
 
 export default function GameContainer() {
-  const [state, dispatch] = useReducer(reducer, INITIAL);
+  const [state, dispatch] = useReducer(gameReducer, INITIAL_GAME_STATE);
+  const simulationRequestLock = useRef(false);
   const cfg = SPORT_CONFIG;
 
   // Boot
@@ -428,10 +568,68 @@ export default function GameContainer() {
     return () => { cancelled = true; };
   }, [state.pendingLoad]);
 
+  // Gamble fetches unseen era rosters until one has a compatible non-duplicate replacement.
+  useEffect(() => {
+    if (!state.pendingGamble) return;
+    const { slotId, loadId } = state.pendingGamble;
+    let cancelled = false;
+
+    async function runGamble() {
+      let queue = state.pendingGamble?.candidates ?? [];
+      let attempts = 0;
+
+      while (queue.length > 0 && attempts < 24) {
+        const result = pickGambleEra(queue);
+        if (!result) break;
+        attempts++;
+        queue = result.newQueue;
+
+        try {
+          const { item } = result;
+          const res = await fetch(`/api/players/nba?teamId=${encodeURIComponent(item.team.id)}&eraId=${encodeURIComponent(item.era.id)}`);
+          if (!res.ok) continue;
+          const data = await res.json() as PlayersResponse;
+          const replacement = selectGambleReplacement(state.slots, slotId, data.players);
+          if (replacement) {
+            if (!cancelled) dispatch({ type: 'APPLY_GAMBLE', slotId, item, player: replacement, loadId });
+            return;
+          }
+        } catch {
+          // Try the next unseen era candidate.
+        }
+      }
+
+      if (!cancelled) {
+        dispatch({
+          type: 'GAMBLE_FAILED',
+          loadId,
+          message: 'No compatible Gamble replacement was available from the remaining unseen eras.',
+        });
+      }
+    }
+
+    void runGamble();
+
+    return () => { cancelled = true; };
+  }, [state.pendingGamble, state.slots]);
+
+  useEffect(() => {
+    if (!state.simulationPending) simulationRequestLock.current = false;
+  }, [state.simulationPending]);
+
   // Simulate
   const handleSimulate = async () => {
-    if (state.phase !== 'complete' || state.simulationCount >= 2 || state.simulationPending) return;
-    dispatch({ type: 'START_SIMULATION' });
+    if (
+      simulationRequestLock.current ||
+      state.phase !== 'complete' ||
+      state.simulationCount >= 2 ||
+      state.simulationPending ||
+      state.gamblePending ||
+      state.gambleConfirmSlotId
+    ) return;
+    simulationRequestLock.current = true;
+    const loadId = state.loadId + 1;
+    dispatch({ type: 'START_SIMULATION', loadId });
     try {
       const res = await fetch('/api/simulate', {
         method: 'POST',
@@ -439,9 +637,9 @@ export default function GameContainer() {
         body: JSON.stringify({ sport: 'nba', mode: 'combined', slots: state.slots }),
       });
       if (!res.ok) throw new Error();
-      dispatch({ type: 'SET_SIMULATION', result: await res.json() });
+      dispatch({ type: 'SET_SIMULATION', result: await res.json(), loadId });
     } catch {
-      dispatch({ type: 'SIMULATION_FAILED' });
+      dispatch({ type: 'SIMULATION_FAILED', loadId });
     }
   };
 
@@ -449,7 +647,24 @@ export default function GameContainer() {
   const openRequired = state.slots.filter(s => s.required && !s.player).length;
   const gspr = state.team ? computeTeamGSPR(state.slots, 'nba', 'combined').gspr : 0;
   const tier = getGsprTier(gspr);
-  const canSimulate = state.phase === 'complete' && state.simulationCount < 2 && !state.simulationPending;
+  const canUseTeamReroll = Boolean(
+    state.team &&
+    state.era &&
+    !state.rerolls.teamUsed &&
+    !state.gameplayLocked &&
+    hasTeamReroll(state.eraQueue, state.team.id, state.era.startYear)
+  );
+  const canUseEraReroll = Boolean(
+    state.team &&
+    state.era &&
+    !state.rerolls.eraUsed &&
+    !state.gameplayLocked &&
+    hasEraReroll(state.eraQueue, state.team.id, state.era.id)
+  );
+  const canSimulate = state.phase === 'complete' && state.simulationCount < 2 && !state.simulationPending && !state.gamblePending;
+  const gambleSlot = state.gambleConfirmSlotId
+    ? state.slots.find(slot => slot.id === state.gambleConfirmSlotId) ?? null
+    : null;
 
   return (
     <div className="theme-nba min-h-screen">
@@ -479,6 +694,12 @@ export default function GameContainer() {
           </div>
         )}
 
+        {state.rosterActionMessage && (
+          <div className="mb-3 rounded-lg border border-red-700 bg-red-950/50 px-4 py-2 text-sm text-red-300">
+            {state.rosterActionMessage}
+          </div>
+        )}
+
         {state.phase !== 'complete' && <div className="mb-4">
           <EraCard era={state.era} team={state.team} isLoading={state.phase === 'loading'} sport="nba" />
         </div>}
@@ -487,23 +708,23 @@ export default function GameContainer() {
         {state.phase !== 'complete' && <div className="flex gap-2 mb-4">
           <button
             onClick={() => dispatch({ type: 'REROLL_TEAM' })}
-            disabled={state.rerolls.teamUsed || state.phase !== 'ready'}
+            disabled={state.rerolls.teamUsed || state.phase !== 'ready' || !canUseTeamReroll}
             className="px-4 py-2 rounded-lg text-sm border border-white/10 hover:border-white/20 text-gray-400 hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            {state.rerolls.teamUsed ? '✓ Team rerolled' : '🔀 Reroll Team'}
+            {state.rerolls.teamUsed ? '✓ Team rerolled' : canUseTeamReroll ? '🔀 Reroll Team' : 'Team unavailable'}
           </button>
           <button
             onClick={() => dispatch({ type: 'REROLL_ERA' })}
-            disabled={state.rerolls.eraUsed || state.phase !== 'ready'}
+            disabled={state.rerolls.eraUsed || state.phase !== 'ready' || !canUseEraReroll}
             className="px-4 py-2 rounded-lg text-sm border border-white/10 hover:border-white/20 text-gray-400 hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            {state.rerolls.eraUsed ? '✓ Era rerolled' : '🔀 Reroll Era'}
+            {state.rerolls.eraUsed ? '✓ Era rerolled' : canUseEraReroll ? '🔀 Reroll Era' : 'Era unavailable'}
           </button>
         </div>}
 
         {state.swapSlotId && (
           <div className="mb-3 px-4 py-2 bg-yellow-950/60 border border-yellow-700 rounded-lg text-yellow-300 text-sm flex items-center gap-2">
-            <span>🔄 Pick a compatible player to swap them into the slot.</span>
+            <span>Choose another filled roster spot to complete the swap.</span>
             <button onClick={() => dispatch({ type: 'CANCEL_SWAP' })} className="ml-auto text-yellow-400 hover:text-yellow-200 text-xs">Cancel</button>
           </div>
         )}
@@ -555,10 +776,15 @@ export default function GameContainer() {
           <TeamRoster
             slots={state.slots}
             sport="nba"
-            onPositionSwap={(slotId) => dispatch({ type: 'ACTIVATE_SWAP', slotId })}
-            positionSwapUsed={state.positionSwapUsed || Boolean(state.swapSlotId) || state.phase !== 'ready'}
+            onPositionSwap={(slotId) => dispatch({ type: 'START_ROSTER_SWAP', slotId })}
+            onRosterSwapTarget={(slotId) => dispatch({ type: 'COMMIT_ROSTER_SWAP', slotId })}
+            positionSwapUsed={state.positionSwapUsed || state.gameplayLocked || Boolean(state.swapSlotId) || state.phase !== 'ready'}
             activeSwapSlotId={state.swapSlotId}
+            invalidSwapSlotId={state.invalidRosterSlotId}
             justPlacedSlotId={state.justPlacedSlotId}
+            onGamble={(slotId) => dispatch({ type: 'REQUEST_GAMBLE', slotId })}
+            gambleAvailable={state.phase === 'complete' && !state.gameplayLocked && !state.gambleUsed && !state.gamblePending}
+            gamblePending={state.gamblePending}
           />
 
           <div className="hidden lg:block bg-white/5" />
@@ -584,7 +810,9 @@ export default function GameContainer() {
                 ? { background: `linear-gradient(135deg, ${cfg.primaryColor}, ${cfg.accentColor})` }
                 : undefined}
             >
-              {state.simulationPending
+              {state.gamblePending
+                ? 'Gambling...'
+                : state.simulationPending
                 ? 'Simulating...'
                 : state.phase === 'complete' && state.simulationCount === 0
                 ? '⚡ Simulate Season'
@@ -605,6 +833,32 @@ export default function GameContainer() {
           onPlace={(player, slotId) => dispatch({ type: 'PLACE_PLAYER', player, slotId })}
           onCancel={() => dispatch({ type: 'CANCEL_PLACEMENT' })}
         />
+      )}
+
+      {gambleSlot?.player && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center">
+          <div className="w-full max-w-md rounded-lg border border-yellow-500/20 bg-[#11100e] p-5 shadow-2xl">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-yellow-400">Confirm Gamble</div>
+            <h3 className="mt-1 text-xl font-black text-white">{gambleSlot.label}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+              Replace {gambleSlot.player.name} with the best compatible non-duplicate player from a random unseen team-era. The result may raise or lower this roster.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => dispatch({ type: 'CANCEL_GAMBLE' })}
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 py-3 text-sm font-bold text-gray-300 transition-colors hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => dispatch({ type: 'CONFIRM_GAMBLE' })}
+                className="flex-1 rounded-lg bg-yellow-500/20 py-3 text-sm font-black text-yellow-200 transition-colors hover:bg-yellow-500/30"
+              >
+                Gamble
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {state.showResults && state.simulationResult && (

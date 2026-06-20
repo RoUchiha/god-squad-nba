@@ -38,6 +38,7 @@ describe('player identity', () => {
   it('normalizes punctuation, accents, and spacing for duplicate checks', () => {
     expect(normalizePlayerName(" Shaquille   O'Neal ")).toBe('shaquille oneal');
     expect(normalizePlayerName('Nikola Jokic')).toBe('nikola jokic');
+    expect(normalizePlayerName('Gary Payton II')).toBe('gary payton');
   });
 
   it('treats the same real player from different eras as a duplicate', () => {

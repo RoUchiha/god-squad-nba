@@ -6,8 +6,9 @@ import { simulateSeason } from '@/lib/algorithms/simulator';
 import { analyzeTeamComposition } from '@/lib/teamComposition';
 import { explainSeasonRecord } from '@/lib/recordJustification';
 import { getServerEnv } from '@/lib/serverEnv';
-import { checkDailyQuota, checkRateLimit, getClientIp } from '@/lib/security';
+import { checkDailyQuota, checkRateLimit, getClientIp, isTrustedMutationRequest, readJsonBody } from '@/lib/security';
 import { getDailyNbaTeamStrengths } from '@/lib/nbaLeague';
+import { canonicalizeSimulationRoster, validateSimulationRoster } from '@/lib/simulationRoster';
 
 const RateStat = z.number().finite().min(0).max(1);
 const BoxScoreStat = z.number().finite().min(0).max(60);
@@ -56,44 +57,75 @@ const SimulateBodySchema = z.object({
 }).strict();
 
 export async function POST(req: NextRequest) {
+  if (!isTrustedMutationRequest(req)) {
+    return NextResponse.json({ error: 'Cross-site requests are not allowed' }, {
+      status: 403,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+
+  if (!req.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    return NextResponse.json({ error: 'Content-Type must be application/json' }, {
+      status: 415,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+
   const ip = getClientIp(req);
-  const requestLimit = checkRateLimit(`simulate:${ip}`, { limit: 20, windowMs: 60_000 });
+  const requestLimit = checkRateLimit(`simulate:${ip}`, { limit: 12, windowMs: 60_000 });
   if (!requestLimit.allowed) {
     return NextResponse.json(
       { error: 'Too many simulation requests' },
-      { status: 429, headers: { 'Retry-After': String(requestLimit.retryAfter) } }
+      { status: 429, headers: { 'Retry-After': String(requestLimit.retryAfter), 'Cache-Control': 'no-store' } }
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-
-  const parsed = SimulateBodySchema.safeParse(body);
-  if (!parsed.success) {
+  const bodyResult = await readJsonBody(req);
+  if (!bodyResult.ok) {
     return NextResponse.json(
-      { error: 'Invalid request data', details: parsed.error.flatten() },
-      { status: 400 }
+      { error: bodyResult.reason === 'too-large' ? 'Request body is too large' : 'Invalid JSON body' },
+      { status: bodyResult.reason === 'too-large' ? 413 : 400, headers: { 'Cache-Control': 'no-store' } }
     );
+  }
+
+  const parsed = SimulateBodySchema.safeParse(bodyResult.value);
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid request data' }, {
+      status: 400,
+      headers: { 'Cache-Control': 'no-store' },
+    });
   }
 
   const { sport, mode, slots } = parsed.data;
 
   // Type-cast validated data back to our domain types
-  const typedSlots = slots as unknown as FilledRosterSlot[];
+  const submittedSlots = slots as unknown as FilledRosterSlot[];
+  const rosterError = validateSimulationRoster(submittedSlots);
+  if (rosterError) {
+    return NextResponse.json({ error: rosterError }, { status: 400 });
+  }
+  const canonical = canonicalizeSimulationRoster(submittedSlots);
+  if (!canonical.slots) {
+    return NextResponse.json({ error: canonical.error }, { status: 400 });
+  }
+  const typedSlots = canonical.slots;
+  const canonicalRosterError = validateSimulationRoster(typedSlots);
+  if (canonicalRosterError) {
+    return NextResponse.json({ error: canonicalRosterError }, { status: 400 });
+  }
 
   const teamPower = computeTeamGSPR(typedSlots, sport as Sport, mode as DraftMode);
   const compositionAnalysis = analyzeTeamComposition(typedSlots);
   const teamStrengths = await getDailyNbaTeamStrengths();
   const results = simulateSeason(teamPower, sport as Sport, compositionAnalysis, teamStrengths, typedSlots);
   const env = getServerEnv();
-  const quota = env.OPENAI_API_KEY
-    ? checkDailyQuota(`openai:${ip}`, env.OPENAI_DAILY_REQUEST_LIMIT)
-    : { allowed: true as const };
-  const explanation = await explainSeasonRecord(results, typedSlots, quota.allowed);
+  const perIpQuota = env.OPENAI_API_KEY
+    ? checkDailyQuota(`openai:ip:${ip}`, Math.min(20, env.OPENAI_DAILY_REQUEST_LIMIT))
+    : { allowed: false as const, retryAfter: 0 };
+  const globalQuota = env.OPENAI_API_KEY && perIpQuota.allowed
+    ? checkDailyQuota('openai:global', env.OPENAI_DAILY_REQUEST_LIMIT)
+    : { allowed: false as const, retryAfter: 0 };
+  const explanation = await explainSeasonRecord(results, typedSlots, perIpQuota.allowed && globalQuota.allowed);
 
   return NextResponse.json({ ...results, ...explanation }, {
     headers: {
