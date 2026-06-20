@@ -7,10 +7,26 @@ import {
   rerollTeam,
 } from '../lib/eraQueue';
 import {
+  curatedEraWeight,
   getCuratedNBAEraCatalog,
+  NBA_GOAT_SCORE,
   NBA_PLAYABLE_ERA_COUNT,
   NBA_TEAMS,
 } from '../lib/sports/nba';
+import type { Player } from '../lib/types';
+
+function weightedPlayer(playerScore: number, isLegend = false): Player {
+  return {
+    id: `weight-${playerScore}-${isLegend}`,
+    name: `Weight ${playerScore}`,
+    position: 'PG',
+    positionGroup: 'offense',
+    yearsWithTeam: '2000-2004',
+    stats: {},
+    playerScore,
+    isLegend,
+  };
+}
 
 describe('NBA reroll rules', () => {
   it('builds a full roster-backed session queue with unique team-era keys', () => {
@@ -84,26 +100,38 @@ describe('NBA reroll rules', () => {
     expect(gambleResult!.newQueue.some(item => item.key === gambleResult!.item.key)).toBe(false);
   });
 
-  it('light elite weighting keeps all entries but modestly delays elite-heavy eras', () => {
+  it('makes GOAT and multi-elite eras meaningfully rarer without removing them', () => {
+    expect(curatedEraWeight([weightedPlayer(89)])).toBe(1);
+    expect(curatedEraWeight([weightedPlayer(90)])).toBe(0.92);
+    expect(curatedEraWeight([weightedPlayer(93)])).toBe(0.8);
+    expect(curatedEraWeight([weightedPlayer(NBA_GOAT_SCORE)])).toBe(0.6);
+    expect(curatedEraWeight([
+      weightedPlayer(NBA_GOAT_SCORE, true),
+      weightedPlayer(94, true),
+      weightedPlayer(91, true),
+    ])).toBe(0.3);
+
     const catalog = getCuratedNBAEraCatalog();
-    const eliteKeys = new Set(catalog.filter(item => item.elitePlayerCount >= 2 || item.legendCount >= 2).map(item => item.key));
-    const ordinaryKeys = new Set(catalog.filter(item => !eliteKeys.has(item.key)).map(item => item.key));
-    let eliteFirstTen = 0;
+    const rareKeys = new Set(catalog.filter(item => item.goatPlayerCount > 0 || item.elitePlayerCount >= 2).map(item => item.key));
+    const ordinaryKeys = new Set(catalog.filter(item => item.weight === 1).map(item => item.key));
+    let rareFirstTen = 0;
     let ordinaryFirstTen = 0;
 
-    for (let seed = 1; seed <= 80; seed++) {
+    for (let seed = 1; seed <= 240; seed++) {
       let state = seed;
       const rng = () => {
         state = (state * 1664525 + 1013904223) >>> 0;
         return state / 0xffffffff;
       };
       const firstTen = buildEraQueue({ rng }).slice(0, 10);
-      eliteFirstTen += firstTen.filter(item => eliteKeys.has(item.key)).length;
+      rareFirstTen += firstTen.filter(item => rareKeys.has(item.key)).length;
       ordinaryFirstTen += firstTen.filter(item => ordinaryKeys.has(item.key)).length;
     }
 
-    expect(eliteFirstTen).toBeGreaterThan(0);
+    expect(rareFirstTen).toBeGreaterThan(0);
     expect(ordinaryFirstTen).toBeGreaterThan(0);
-    expect(eliteFirstTen / eliteKeys.size).toBeLessThan(ordinaryFirstTen / ordinaryKeys.size);
+    expect(rareFirstTen / rareKeys.size).toBeLessThan(
+      (ordinaryFirstTen / ordinaryKeys.size) * 0.75
+    );
   });
 });

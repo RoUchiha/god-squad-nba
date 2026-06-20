@@ -796,13 +796,27 @@ export function getCuratedNBAPlayers(team: HistoricalTeam, era: Era): Player[] |
   return applyChampionshipCoreFloors(key, dedupedPlayers);
 }
 
+export const NBA_ELITE_SCORE = 90;
+export const NBA_SUPERSTAR_SCORE = 93;
+export const NBA_GOAT_SCORE = 96;
+
 export function curatedEraWeight(players: Player[]): number {
-  const hasMultipleElitePlayers = players.filter(player => player.playerScore >= 90).length >= 2;
-  const hasMultipleLegendPlayers = players.filter(player => player.isLegend).length >= 2;
-  let weight = 1;
-  if (hasMultipleElitePlayers) weight *= 0.86;
-  if (hasMultipleLegendPlayers) weight *= 0.88;
-  return Math.max(0.74, Math.round(weight * 1000) / 1000);
+  const elitePlayerCount = players.filter(player => player.playerScore >= NBA_ELITE_SCORE).length;
+  const legendCount = players.filter(player => player.isLegend).length;
+  const topPlayerScore = Math.max(0, ...players.map(player => player.playerScore));
+
+  let weight = topPlayerScore >= NBA_GOAT_SCORE
+    ? 0.6
+    : topPlayerScore >= NBA_SUPERSTAR_SCORE
+      ? 0.8
+      : elitePlayerCount > 0
+        ? 0.92
+        : 1;
+
+  weight *= Math.pow(0.72, Math.max(0, elitePlayerCount - 1));
+  weight *= Math.pow(0.9, Math.max(0, legendCount - 1));
+
+  return Math.max(0.3, Math.round(weight * 1000) / 1000);
 }
 
 export interface CuratedNBAEraCatalogEntry {
@@ -811,6 +825,8 @@ export interface CuratedNBAEraCatalogEntry {
   era: Era;
   weight: number;
   elitePlayerCount: number;
+  superstarPlayerCount: number;
+  goatPlayerCount: number;
   legendCount: number;
 }
 
@@ -840,7 +856,9 @@ export function getCuratedNBAEraCatalog(): CuratedNBAEraCatalogEntry[] {
             team,
             era: catalogEra,
             weight: curatedEraWeight(players),
-            elitePlayerCount: players.filter(player => player.playerScore >= 90).length,
+            elitePlayerCount: players.filter(player => player.playerScore >= NBA_ELITE_SCORE).length,
+            superstarPlayerCount: players.filter(player => player.playerScore >= NBA_SUPERSTAR_SCORE).length,
+            goatPlayerCount: players.filter(player => player.playerScore >= NBA_GOAT_SCORE).length,
             legendCount: players.filter(player => player.isLegend).length,
           };
         })

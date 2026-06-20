@@ -38,6 +38,7 @@ Rosters come from validated historical data. No fake names, no placeholder stats
 - **5 GSPR tiers:** Average, Good, Great, Legendary, and GOD SQUAD.
 - **Multi-pick prevention** through reducer-level state transitions.
 - **No team-era repeats** across drafts, skips, rerolls, and Gamble.
+- **Rarity-weighted rolls** make GOAT players and multi-elite superteams special without removing any era.
 - **Roster-to-roster Position Swap** for two compatible filled slots.
 - **Completed-roster Gamble** that replaces one slot from a random unseen team-era.
 - **Simulation integrity lock** that permanently freezes rerolls, swaps, and Gamble on the first simulation click while the server restores canonical player ratings and stats.
