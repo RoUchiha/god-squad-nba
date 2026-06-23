@@ -9,8 +9,10 @@ import {
 import {
   curatedEraWeight,
   getCuratedNBAEraCatalog,
+  NBA_ELITE_SCORE,
   NBA_GOAT_SCORE,
   NBA_PLAYABLE_ERA_COUNT,
+  NBA_SUPERSTAR_SCORE,
   NBA_TEAMS,
 } from '../lib/sports/nba';
 import type { Player } from '../lib/types';
@@ -100,19 +102,19 @@ describe('NBA reroll rules', () => {
     expect(gambleResult!.newQueue.some(item => item.key === gambleResult!.item.key)).toBe(false);
   });
 
-  it('makes GOAT and multi-elite eras meaningfully rarer without removing them', () => {
+  it('makes GOAT and multi-elite eras substantially rarer without removing them', () => {
     expect(curatedEraWeight([weightedPlayer(89)])).toBe(1);
-    expect(curatedEraWeight([weightedPlayer(90)])).toBe(0.92);
-    expect(curatedEraWeight([weightedPlayer(93)])).toBe(0.8);
-    expect(curatedEraWeight([weightedPlayer(NBA_GOAT_SCORE)])).toBe(0.6);
+    expect(curatedEraWeight([weightedPlayer(NBA_ELITE_SCORE)])).toBe(0.78);
+    expect(curatedEraWeight([weightedPlayer(NBA_SUPERSTAR_SCORE)])).toBe(0.5);
+    expect(curatedEraWeight([weightedPlayer(NBA_GOAT_SCORE)])).toBe(0.26);
     expect(curatedEraWeight([
       weightedPlayer(NBA_GOAT_SCORE, true),
       weightedPlayer(94, true),
       weightedPlayer(91, true),
-    ])).toBe(0.3);
+    ])).toBe(0.1);
 
     const catalog = getCuratedNBAEraCatalog();
-    const rareKeys = new Set(catalog.filter(item => item.goatPlayerCount > 0 || item.elitePlayerCount >= 2).map(item => item.key));
+    const rareKeys = new Set(catalog.filter(item => item.goatPlayerCount > 0 || item.superstarPlayerCount >= 2 || item.elitePlayerCount >= 3).map(item => item.key));
     const ordinaryKeys = new Set(catalog.filter(item => item.weight === 1).map(item => item.key));
     let rareFirstTen = 0;
     let ordinaryFirstTen = 0;
@@ -131,7 +133,7 @@ describe('NBA reroll rules', () => {
     expect(rareFirstTen).toBeGreaterThan(0);
     expect(ordinaryFirstTen).toBeGreaterThan(0);
     expect(rareFirstTen / rareKeys.size).toBeLessThan(
-      (ordinaryFirstTen / ordinaryKeys.size) * 0.75
+      (ordinaryFirstTen / ordinaryKeys.size) * 0.5
     );
   });
 });

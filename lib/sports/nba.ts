@@ -802,21 +802,25 @@ export const NBA_GOAT_SCORE = 96;
 
 export function curatedEraWeight(players: Player[]): number {
   const elitePlayerCount = players.filter(player => player.playerScore >= NBA_ELITE_SCORE).length;
+  const superstarPlayerCount = players.filter(player => player.playerScore >= NBA_SUPERSTAR_SCORE).length;
+  const goatPlayerCount = players.filter(player => player.playerScore >= NBA_GOAT_SCORE).length;
   const legendCount = players.filter(player => player.isLegend).length;
   const topPlayerScore = Math.max(0, ...players.map(player => player.playerScore));
 
   let weight = topPlayerScore >= NBA_GOAT_SCORE
-    ? 0.6
+    ? 0.26
     : topPlayerScore >= NBA_SUPERSTAR_SCORE
-      ? 0.8
+      ? 0.5
       : elitePlayerCount > 0
-        ? 0.92
+        ? 0.78
         : 1;
 
-  weight *= Math.pow(0.72, Math.max(0, elitePlayerCount - 1));
-  weight *= Math.pow(0.9, Math.max(0, legendCount - 1));
+  weight *= Math.pow(0.58, Math.max(0, elitePlayerCount - 1));
+  weight *= Math.pow(0.62, Math.max(0, superstarPlayerCount - 1));
+  weight *= Math.pow(0.7, Math.max(0, goatPlayerCount - 1));
+  weight *= Math.pow(0.86, Math.max(0, legendCount - 1));
 
-  return Math.max(0.3, Math.round(weight * 1000) / 1000);
+  return Math.max(0.1, Math.round(weight * 1000) / 1000);
 }
 
 export interface CuratedNBAEraCatalogEntry {

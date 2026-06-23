@@ -2,9 +2,9 @@
  * Client-side playable era queue.
  *
  * The queue is built only from validated roster-backed team-era entries. It is
- * a weighted permutation: superstar and elite-heavy eras are meaningfully less
- * likely to appear early, but every entry remains in the run and can still be
- * exhausted.
+ * a weighted permutation: superstar and elite-heavy eras are substantially
+ * less likely to appear early, but every entry remains in the run and can
+ * still be exhausted.
  */
 
 import type { Era, HistoricalTeam } from './types';
